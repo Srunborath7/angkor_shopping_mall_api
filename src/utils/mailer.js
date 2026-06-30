@@ -1,30 +1,26 @@
-const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
 
-const transporter = nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    port: 465,
-    secure: true,
-    auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-    },
-    connectionTimeout: 30000,
-    greetingTimeout: 30000,
-    socketTimeout: 30000,
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
+
 const sendOtpEmail = async (email, otp) => {
     try {
-        const info = await transporter.sendMail({
-            from: process.env.EMAIL_USER,
+        const response = await resend.emails.send({
+            from: process.env.EMAIL_FROM,
             to: email,
             subject: "Password Reset OTP",
-            text: `Your password reset OTP is: ${otp}`
+            html: `
+                <h2>Password Reset</h2>
+                <p>Your OTP code is:</p>
+                <h1 style="color:#2563eb;">${otp}</h1>
+                <p>This OTP will expire in 5 minutes.</p>
+            `
         });
 
-        console.log(info);
+        console.log("Email sent:", response);
+
     } catch (error) {
         console.error("EMAIL ERROR:", error);
-        throw error;
+        throw new Error("Failed to send OTP email");
     }
 };
 
