@@ -4,10 +4,11 @@ const transporter = nodemailer.createTransport({
     host: "smtp.gmail.com",
     port: 587,
     secure: false,
+    family: 4, // Force IPv4
     auth: {
         user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-    }
+        pass: process.env.EMAIL_PASS,
+    },
 });
 
 const sendOtpEmail = async (email, otp) => {
@@ -15,14 +16,14 @@ const sendOtpEmail = async (email, otp) => {
         const info = await transporter.sendMail({
             from: process.env.EMAIL_USER,
             to: email,
-            subject: 'Password Reset OTP',
-            text: `Your password reset OTP is: ${otp}. It expires in 5 minutes.`
+            subject: "Password Reset OTP",
+            text: `Your password reset OTP is: ${otp}`
         });
 
-        console.log("Email sent:", info.response);
+        console.log(info);
     } catch (error) {
-        console.error("OTP Email Error:", error);
-        throw new Error("Failed to send OTP email");
+        console.error("EMAIL ERROR:", error);
+        throw error;
     }
 };
 
