@@ -11,6 +11,15 @@ app.get("/", (req, res) => {
         message: "Server is running successfully"
     });
 });
+app.get("/test-email", async (req, res) => {
+    try {
+        await sendOtpEmail("srunborath44@gmail.com", "0974242291");
+        res.send("sent");
+    } catch (err) {
+        console.log(err);
+        res.status(500).send(err.message);
+    }
+});
 app.use('/api/roles', roleRoutes);
 app.use('/api/users', userRoutes)
 app.use('/api/auth', authRoutes);
