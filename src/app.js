@@ -5,6 +5,7 @@ require('./models/relationships');
 const roleRoutes = require('./routes/roleRoute');
 const userRoutes = require('./routes/userRoute');
 const authRoutes = require('./routes/authRoute');
+const cate = require('./routes/categoryRoute');
 app.get("/", (req, res) => {
     res.status(200).json({
         success: true,
@@ -23,5 +24,5 @@ app.get("/test-email", async (req, res) => {
 app.use('/api/roles', roleRoutes);
 app.use('/api/users', userRoutes)
 app.use('/api/auth', authRoutes);
-
+app.use('/api/categories', cate);
 module.exports = app;
