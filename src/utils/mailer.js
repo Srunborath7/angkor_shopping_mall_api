@@ -1,32 +1,56 @@
-const { Resend } = require("resend");
+const nodemailer = require("nodemailer");
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const transporter = nodemailer.createTransport({
+    host: "smtp.gmail.com",
+    port: 465,
+    secure: true,
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+    },
+});
+
+// Verify SMTP connection
+transporter.verify((error, success) => {
+    if (error) {
+        console.error("SMTP Error:", error);
+    } else {
+        console.log("SMTP Server is ready");
+    }
+});
 
 const sendOtpEmail = async (email, otp) => {
     try {
-        const result = await resend.emails.send({
-            from: process.env.EMAIL_FROM,
+        const info = await transporter.sendMail({
+            from: `"OTP Verification" <${process.env.EMAIL_USER}>`,
             to: email,
             subject: "Password Reset OTP",
             html: `
-                <h2>Your OTP Code</h2>
-                <h1>${otp}</h1>
-                <p>This OTP expires in 5 minutes.</p>
-            `
+                <div style="font-family:Arial,sans-serif">
+                    <h2>Password Reset</h2>
+                    <p>Your OTP is:</p>
+
+                    <h1 style="color:#0d6efd">${otp}</h1>
+
+                    <p>This OTP expires in <b>5 minutes</b>.</p>
+
+                    <p>If you didn't request this, ignore this email.</p>
+                </div>
+            `,
         });
 
-        console.log("EMAIL RESULT:", result);
+        console.log("Email sent:", info.messageId);
+        console.log("Response:", info.response);
 
-        if (result.error) {
-            throw new Error(result.error.message);
-        }
-
-        return result;
-
+        return true;
     } catch (error) {
-        console.error("EMAIL SEND ERROR:", error);
+        console.error("Email sending failed:");
+        console.error(error);
+
         throw error;
     }
 };
 
-module.exports = { sendOtpEmail };
+module.exports = {
+    sendOtpEmail,
+};
