@@ -1,8 +1,12 @@
-const TelegramBot = require("node-telegram-bot-api");
+
 const User = require("../models/userModel");
+const TelegramBot = require("node-telegram-bot-api");
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, {
-    polling: true
+    polling: {
+        interval: 1000,
+        autoStart: true
+    }
 });
 
 bot.onText(/\/start/, (msg) => {
