@@ -1,6 +1,7 @@
 
 const User = require("../models/userModel");
 const TelegramBot = require("node-telegram-bot-api");
+const normalizePhone = require("../utils/phone");
 
 const bot = new TelegramBot(process.env.BOT_TOKEN, {
     polling: {
@@ -9,62 +10,111 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, {
     }
 });
 
-bot.onText(/\/start/, (msg) => {
-    bot.sendMessage(
+bot.onText(/\/start/, async (msg) => {
+
+    await bot.sendMessage(
         msg.chat.id,
-        "Welcome!\n\nPlease share your phone number to link your account.",
+        `👋 Welcome to Angkor Shopping Mall
+
+Please share your phone number to link your account.`,
         {
             reply_markup: {
-                keyboard: [[
-                    {
-                        text: "📱 Share Phone Number",
-                        request_contact: true
-                    }
-                ]],
+                keyboard: [
+                    [
+                        {
+                            text: "📱 Share Phone Number",
+                            request_contact: true
+                        }
+                    ]
+                ],
                 resize_keyboard: true,
                 one_time_keyboard: true
             }
         }
     );
+
 });
 
-bot.on("contact", async (msg) => {
-    try {
-        const chatId = msg.chat.id;
-        let phone = msg.contact.phone_number;
 
-        // Normalize to your database format
-        if (phone.startsWith("+855")) {
-            phone = "0" + phone.substring(4);
-        }
+bot.on("contact", async (msg)=>{
+
+    try {
+
+        const telegramPhone =
+            normalizePhone(
+                msg.contact.phone_number
+            );
+
+
+        console.log(
+            "Telegram Phone:",
+            telegramPhone
+        );
+
 
         const user = await User.findOne({
-            where: { phone }
+            where:{
+                phone: telegramPhone
+            }
         });
 
-        if (!user) {
+
+
+        if(!user){
+
             return bot.sendMessage(
-                chatId,
-                `No account found for ${phone}.`
+                msg.chat.id,
+                `❌ No account found for ${telegramPhone}
+
+Please register first.`
             );
+
         }
 
-        await user.update({
-            telegram_chat_id: chatId
-        });
+
+
+        // save telegram id
+
+        await User.update(
+            {
+                telegram_chat_id:
+                    msg.chat.id
+            },
+            {
+                where:{
+                    id:user.id
+                }
+            }
+        );
+
+
 
         await bot.sendMessage(
-            chatId,
-            "✅ Telegram linked successfully!\n\nYou can now receive password reset OTPs here."
+            msg.chat.id,
+            `✅ Telegram linked successfully!
+
+You can now receive password reset OTPs here.`,
+            {
+                reply_markup:{
+                    remove_keyboard:true
+                }
+            }
         );
-    } catch (err) {
-        console.error(err);
+
+
+    } catch(error){
+
+        console.log(error);
+
         bot.sendMessage(
             msg.chat.id,
-            "Failed to link your account."
+            "❌ Something went wrong."
         );
+
     }
+
 });
+
 
 module.exports = {
     bot
