@@ -35,86 +35,66 @@ Please share your phone number to link your account.`,
 
 });
 
-
-bot.on("contact", async (msg)=>{
+bot.on("contact", async (msg) => {
 
     try {
 
-        const telegramPhone =
-            normalizePhone(
-                msg.contact.phone_number
-            );
-
-
-        console.log(
-            "Telegram Phone:",
-            telegramPhone
+        const telegramPhone = normalizePhone(
+            msg.contact.phone_number
         );
 
-
         const user = await User.findOne({
-            where:{
+            where: {
                 phone: telegramPhone
             }
         });
 
 
-
-        if(!user){
+        if (!user) {
 
             return bot.sendMessage(
                 msg.chat.id,
-                `❌ No account found for ${telegramPhone}
-
-Please register first.`
+                `❌ No account found for ${telegramPhone}`,
+                {
+                    reply_markup: {
+                        remove_keyboard: true
+                    }
+                }
             );
-
         }
 
 
-
-        // save telegram id
-
         await User.update(
             {
-                telegram_chat_id:
-                    msg.chat.id
+                telegram_chat_id: msg.chat.id
             },
             {
-                where:{
-                    id:user.id
+                where: {
+                    id: user.id
                 }
             }
         );
 
 
-
+        // remove button
         await bot.sendMessage(
             msg.chat.id,
-            `✅ Telegram linked successfully!
-
-You can now receive password reset OTPs here.`,
+            "✅ Telegram linked successfully!\n\nYou can now receive password reset OTPs here.",
             {
-                reply_markup:{
-                    remove_keyboard:true
+                reply_markup: {
+                    remove_keyboard: true
                 }
             }
         );
 
 
-    } catch(error){
+    } catch(error) {
 
         console.log(error);
-
-        bot.sendMessage(
-            msg.chat.id,
-            "❌ Something went wrong."
-        );
 
     }
 
 });
-
 
 module.exports = {
     bot
