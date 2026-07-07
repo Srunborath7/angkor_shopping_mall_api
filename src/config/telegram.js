@@ -14,7 +14,7 @@ bot.onText(/\/start/, async (msg) => {
 
     await bot.sendMessage(
         msg.chat.id,
-        `🛒 <b>Angkor Shopping Mall</b>
+        `🛒 Angkor Shopping Mall
 
 ━━━━━━━━━━━━━━
 🔐 Telegram Account Linking
