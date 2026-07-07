@@ -31,37 +31,50 @@ bot.onText(/\/start/, (msg) => {
 bot.on("contact", async (msg) => {
     try {
         const chatId = msg.chat.id;
+
         let phone = msg.contact.phone_number;
 
-        // Normalize to your database format
-        if (phone.startsWith("+855")) {
-            phone = "0" + phone.substring(4);
+        // Normalize phone number
+        phone = phone
+            .replace(/\s+/g, "")
+            .replace(/-/g, "");
+
+        // Add + if Telegram removes it
+        if (phone.startsWith("855")) {
+            phone = "+" + phone;
         }
+
 
         const user = await User.findOne({
             where: { phone }
         });
 
+
         if (!user) {
             return bot.sendMessage(
                 chatId,
-                `No account found for ${phone}.`
+                `❌ No account found for ${phone}.`
             );
         }
+
 
         await user.update({
             telegram_chat_id: chatId
         });
 
+
         await bot.sendMessage(
             chatId,
             "✅ Telegram linked successfully!\n\nYou can now receive password reset OTPs here."
         );
+
     } catch (err) {
-        console.error(err);
-        bot.sendMessage(
+
+        console.error("Telegram contact error:", err);
+
+        await bot.sendMessage(
             msg.chat.id,
-            "Failed to link your account."
+            "❌ Failed to link your account."
         );
     }
 });
