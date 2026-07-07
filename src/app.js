@@ -6,6 +6,7 @@ const roleRoutes = require('./routes/roleRoute');
 const userRoutes = require('./routes/userRoute');
 const authRoutes = require('./routes/authRoute');
 const cate = require('./routes/categoryRoute');
+const brand = require('./routes/brandRoute');
 app.get("/", (req, res) => {
     res.status(200).json({
         success: true,
@@ -25,4 +26,5 @@ app.use('/api/roles', roleRoutes);
 app.use('/api/users', userRoutes)
 app.use('/api/auth', authRoutes);
 app.use('/api/categories', cate);
+app.use('/api/brands', brand);
 module.exports = app;

@@ -205,6 +205,41 @@ class UserController {
             return errorResponse(res, err.message);
         }
     }
+    async sendResetOtpTelegram(req, res) {
+        try {
+            const result = await userService.sendResetOtpTelegram(req.body.phone);
+            return successResponse(res, "OTP sent", result);
+        } catch (err) {
+            return errorResponse(res, err.message);
+        }
+    }
+
+    async verifyResetOtpTelegram(req, res) {
+        try {
+            const { phone, otp } = req.body;
+
+            const result = await userService.verifyOtpTelegram(phone, otp);
+            return successResponse(
+                res,
+                "OTP verified successfully",
+                result
+            );
+        } catch (error) {
+            return errorResponse(res, error.message);
+        }
+    }
+
+    async resetPasswordTelegram(req, res) {
+        try {
+            const result = await userService.resetPasswordTelegram(
+                req.body.resetToken,
+                req.body.newPassword
+            );
+            return successResponse(res, "Password reset success", result);
+        } catch (err) {
+            return error(res, err.message);
+        }
+    }
 }
 
 module.exports = new UserController();
