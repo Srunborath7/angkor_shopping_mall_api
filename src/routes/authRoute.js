@@ -11,4 +11,8 @@ router.post('/change-password', userController.changePassword);
 router.post('/forgot-password', userController.sendResetOtp);
 router.post('/verify-reset-otp', userController.verifyResetOtp);
 router.post('/reset-password', userController.resetPassword);
+router.post('/telegram/otp/send', userController.sendResetOtpTelegram);
+router.post('/telegram/otp/verify', userController.verifyResetOtpTelegram);
+router.post('/telegram/password/reset', userController.resetPasswordTelegram);
+
 module.exports = router;

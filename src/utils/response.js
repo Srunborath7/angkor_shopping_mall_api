@@ -1,13 +1,13 @@
-const successResponse = (res, message, data = null) => {
-    return res.status(200).json({
+const successResponse = (res, message, data = null, status = 200) => {
+    return res.status(status).json({
         success: true,
         message,
         data
     });
 };
 
-const errorResponse = (res, message) => {
-    return res.status(401).json({
+const errorResponse = (res, message, status = 400) => {
+    return res.status(status).json({
         success: false,
         message
     });

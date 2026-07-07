@@ -1,17 +1,20 @@
 const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const { Op } = require('sequelize');
 
 const User = require('../models/userModel');
 const Role = require('../models/roleModel');
 const RefreshToken = require('../models/refreshTokenModel');
-const jwt = require('jsonwebtoken');
+const Otp = require('../models/otpModel');
+
+const telegramService = require('./telegramService');
 const {
     generateAccessToken,
     generateRefreshToken,
     generateResetToken,
-    verifyResetToken
+    verifyResetToken,
 } = require('../utils/jwt');
-const Otp = require('../models/otpModel');
-const { sendOtpEmail } = require('../utils/mailer');
+
 class UserService {
     async createUser(data) {
         const exist = await User.findOne({
@@ -291,7 +294,92 @@ class UserService {
 
         return { message: "Password reset successful" };
     }
+    async sendResetOtpTelegram(phone) {
+        const user = await User.findOne({
+            where: { phone }
+        });
 
+        if (!user) {
+            throw new Error("Phone not found");
+        }
+
+        if (!user.telegram_chat_id) {
+            throw new Error("Telegram account not linked.");
+        }
+
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+        await Otp.create({
+            user_id: user.id,
+            otp,
+            purpose: "reset_password",
+            expires_at: new Date(Date.now() + 5 * 60 * 1000),
+            is_used: false
+        });
+
+        await telegramService.sendOtp(user.telegram_chat_id, otp);
+
+        return {
+            message: "OTP sent to Telegram"
+        };
+    }
+
+    /**
+     * 2. VERIFY OTP
+     */
+    async verifyOtpTelegram(phone, otp) {
+        const user = await User.findOne({
+            where: { phone }
+        });
+
+        if (!user) {
+            throw new Error("User not found");
+        }
+
+        const otpRecord = await Otp.findOne({
+            where: {
+                user_id: user.id,
+                otp,
+                purpose: "reset_password",
+                is_used: false
+            }
+        });
+
+        if (!otpRecord) {
+            throw new Error("Invalid OTP");
+        }
+
+        if (otpRecord.expires_at < new Date()) {
+            throw new Error("OTP expired");
+        }
+
+        otpRecord.is_used = true;
+        await otpRecord.save();
+
+        const resetToken = generateResetToken(user);
+
+        return {
+            resetToken,
+            message: "OTP verified successfully"
+        };
+    }
+
+    /**
+     * 3. RESET PASSWORD
+     */
+    async resetPasswordTelegram(resetToken, newPassword) {
+
+        const decoded = jwt.verify(resetToken, process.env.RESET_SECRET);
+
+        const user = await User.findByPk(decoded.userId);
+
+        if (!user) throw new Error("User not found");
+
+        user.password = await bcrypt.hash(newPassword, 10);
+        await user.save();
+
+        return { message: "Password reset successful" };
+    }
 }
 
 module.exports = new UserService();
