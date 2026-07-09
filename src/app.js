@@ -3,19 +3,17 @@ const cors = require("cors");
 const path = require("path");
 const app = express();
 require("./models/relationships");
-app.use(
-  cors({
+app.use(cors({
     origin: [
-      "http://localhost:5173",
-      "http://127.0.0.1:5173",
-    "https://angkorshoppingmall.netlify.app/", 
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://angkorshoppingmall.netlify.app"
     ],
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    credentials: true,
     allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
-
+    credentials: true,
+}));
+app.options("*", cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
