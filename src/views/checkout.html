@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Angkor Shopping Mall - Premium Payment Gateway</title>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #f59e0b;
+            --primary-hover: #d97706;
+            --bg-dark: #0f172a;
+            --bg-card: rgba(30, 41, 59, 0.7);
+            --border-glow: rgba(245, 158, 11, 0.2);
+            --text-light: #f8fafc;
+            --text-muted: #94a3b8;
+            --success: #10b981;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Outfit', sans-serif;
+            transition: all 0.3s ease;
+        }
+
+        body {
+            background: radial-gradient(circle at top right, #1e1b4b, #0f172a);
+            color: var(--text-light);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            overflow-x: hidden;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 900px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            background: var(--bg-card);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 24px;
+            padding: 40px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3), 0 0 40px var(--border-glow);
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                grid-template-columns: 1fr;
+                padding: 20px;
+            }
+        }
+
+        h2 {
+            font-size: 1.8rem;
+            font-weight: 700;
+            margin-bottom: 20px;
+            background: linear-gradient(to right, #f59e0b, #ef4444);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        h3 {
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: var(--text-light);
+        }
+
+        /* Order Summary Section */
+        .order-summary {
+            border-right: 1px solid rgba(255, 255, 255, 0.1);
+            padding-right: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .order-summary {
+                border-right: none;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+                padding-right: 0;
+                padding-bottom: 20px;
+            }
+        }
+
+        .order-details {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .order-id {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-bottom: 15px;
+            word-break: break-all;
+        }
+
+        .item-list {
+            list-style: none;
+            max-height: 200px;
+            overflow-y: auto;
+            margin-bottom: 15px;
+            padding-right: 5px;
+        }
+
+        .item-list::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .item-list::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+        }
+
+        .item-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.95rem;
+            margin-bottom: 10px;
+            color: var(--text-light);
+        }
+
+        .item-qty {
+            color: var(--text-muted);
+            margin-right: 8px;
+        }
+
+        .divider {
+            height: 1px;
+            background: rgba(255, 255, 255, 0.1);
+            margin: 15px 0;
+        }
+
+        .shipping-info {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
+
+        .total-box {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--primary);
+            margin-top: 10px;
+        }
+
+        /* Payment Form Section */
+        .payment-methods {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .method-btn {
+            flex: 1;
+            background: rgba(15, 23, 42, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 12px;
+            color: var(--text-muted);
+            font-weight: 600;
+            font-size: 0.9rem;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .method-btn.active {
+            border-color: var(--primary);
+            background: rgba(245, 158, 11, 0.1);
+            color: var(--primary);
+            box-shadow: 0 0 15px rgba(245, 158, 11, 0.15);
+        }
+
+        .method-btn svg {
+            width: 24px;
+            height: 24px;
+            fill: currentColor;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+            position: relative;
+        }
+
+        label {
+            display: block;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+            font-weight: 500;
+        }
+
+        input {
+            width: 100%;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 12px 16px;
+            color: var(--text-light);
+            font-size: 0.95rem;
+            outline: none;
+        }
+
+        input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 10px rgba(245, 158, 11, 0.2);
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        /* Pay button */
+        .pay-btn {
+            width: 100%;
+            background: linear-gradient(to right, var(--primary), var(--primary-hover));
+            color: white;
+            border: none;
+            border-radius: 14px;
+            padding: 16px;
+            font-size: 1.1rem;
+            font-weight: 700;
+            cursor: pointer;
+            margin-top: 15px;
+            box-shadow: 0 8px 20px rgba(245, 158, 11, 0.3);
+        }
+
+        .pay-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 25px rgba(245, 158, 11, 0.4);
+        }
+
+        .pay-btn:active {
+            transform: translateY(1px);
+        }
+
+        /* ABA QR Code block */
+        .qr-container {
+            display: none;
+            text-align: center;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 25px;
+            margin-bottom: 15px;
+        }
+
+        .qr-code {
+            width: 200px;
+            height: 200px;
+            background: white;
+            padding: 15px;
+            border-radius: 16px;
+            margin: 0 auto 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
+        }
+
+        .qr-code img {
+            max-width: 100%;
+            height: auto;
+        }
+
+        .aba-logo-text {
+            color: #005f80;
+            font-weight: 800;
+            font-size: 1.2rem;
+            margin-bottom: 5px;
+        }
+
+        .scan-instruction {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-top: 10px;
+        }
+
+        /* Status & Feedback Screen */
+        .status-screen {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #0f172a;
+            border-radius: 24px;
+            z-index: 10;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            padding: 40px;
+            text-align: center;
+        }
+
+        .spinner {
+            width: 60px;
+            height: 60px;
+            border: 5px solid rgba(245, 158, 11, 0.1);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s infinite linear;
+            margin-bottom: 25px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .success-checkmark {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: rgba(16, 185, 129, 0.1);
+            border: 2px solid var(--success);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 25px;
+            color: var(--success);
+            font-size: 3rem;
+            font-weight: bold;
+            animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        @keyframes popIn {
+            0% { transform: scale(0.5); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        .status-title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        .status-msg {
+            font-size: 0.95rem;
+            color: var(--text-muted);
+            margin-bottom: 20px;
+            max-width: 320px;
+            line-height: 1.5;
+        }
+
+        .status-btn {
+            background: transparent;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: var(--text-light);
+            padding: 10px 24px;
+            border-radius: 10px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .status-btn:hover {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: rgba(255, 255, 255, 0.4);
+        }
+
+        /* Glassmorphic Visa Card styling */
+        .credit-card {
+            background: linear-gradient(135deg, rgba(255,255,255,0.15) 0%, rgba(255,255,255,0.02) 100%);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2);
+            position: relative;
+            height: 150px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+        .card-logo {
+            font-style: italic;
+            font-weight: 800;
+            font-size: 1.2rem;
+            color: var(--primary);
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+        }
+        .card-chip {
+            width: 35px;
+            height: 25px;
+            background: linear-gradient(135deg, #e2e8f0, #94a3b8);
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        .card-number-display {
+            font-size: 1.2rem;
+            letter-spacing: 2px;
+            font-family: monospace;
+            margin-top: 15px;
+        }
+        .card-bottom {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }
+    </style>
+</head>
+<body>
+
+<div class="container" style="position: relative;">
+    <!-- Status Screen Overlay -->
+    <div class="status-screen" id="statusScreen">
+        <div class="spinner" id="statusSpinner"></div>
+        <div class="success-checkmark" id="statusCheckmark">✓</div>
+        <div class="status-title" id="statusTitle">Processing Payment</div>
+        <div class="status-msg" id="statusMsg">Please do not refresh or close this window while we verify your transaction.</div>
+        <button class="status-btn" id="statusBtn" onclick="closeWindow()">Close Window</button>
+    </div>
+
+    <!-- Order Summary Column -->
+    <div class="order-summary">
+        <h2>Angkor Mall Checkout</h2>
+        <div class="order-details">
+            <h3 style="margin-bottom: 5px;">Order Summary</h3>
+            <div class="order-id" id="summaryOrderId">Loading order details...</div>
+            
+            <ul class="item-list" id="summaryItems">
+                <!-- Dynamically loaded -->
+            </ul>
+            
+            <div class="divider"></div>
+            
+            <div class="shipping-info">
+                <strong>📍 Shipping Address:</strong>
+                <div id="summaryAddress">-</div>
+                <strong style="margin-top: 10px; display: block;">📱 Contact Phone:</strong>
+                <div id="summaryPhone">-</div>
+            </div>
+        </div>
+
+        <div class="total-box">
+            <span>Total Amount:</span>
+            <span id="summaryTotal">$0.00</span>
+        </div>
+    </div>
+
+    <!-- Payment Gateway Selection & Form Column -->
+    <div class="payment-details">
+        <h3 style="margin-bottom: 20px;">Choose Payment Method</h3>
+        
+        <div class="payment-methods">
+            <button class="method-btn active" id="methodCard" onclick="switchMethod('card')">
+                <svg viewBox="0 0 24 24">
+                    <path d="M20 4H4c-1.11 0-1.99.89-1.99 2L2 18c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V6c0-1.11-.89-2-2-2zm0 14H4v-6h16v6zm0-10H4V6h16v8z"/>
+                </svg>
+                Card Payment
+            </button>
+            <button class="method-btn" id="methodAba" onclick="switchMethod('aba')">
+                <svg viewBox="0 0 24 24">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H7c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.04-.42 1.99-1.07 2.75z"/>
+                </svg>
+                ABA PAY QR
+            </button>
+        </div>
+
+        <!-- Card Section -->
+        <div id="cardSection">
+            <!-- Simulated Premium Card Representation -->
+            <div class="credit-card">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span class="card-logo">ANGKOR PAY</span>
+                    <span style="font-weight: 500; font-size: 0.8rem; letter-spacing: 1px;">PREMIUM</span>
+                </div>
+                <div class="card-chip"></div>
+                <div class="card-number-display" id="cardDisplayNumber">•••• •••• •••• ••••</div>
+                <div class="card-bottom">
+                    <div>
+                        <div style="font-size: 0.5rem; color: var(--text-muted);">Card Holder</div>
+                        <div id="cardDisplayName" style="font-weight: 600; color: var(--text-light);">VALUED CUSTOMER</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.5rem; color: var(--text-muted);">Expires</div>
+                        <div id="cardDisplayExpiry" style="font-weight: 600; color: var(--text-light);">MM/YY</div>
+                    </div>
+                </div>
+            </div>
+
+            <form id="cardForm" onsubmit="submitPayment(event)">
+                <div class="form-group">
+                    <label for="cardName">Cardholder Name</label>
+                    <input type="text" id="cardName" placeholder="e.g. CHEA SOPHEAK" required oninput="updateCardDetails()">
+                </div>
+                <div class="form-group">
+                    <label for="cardNumber">Card Number</label>
+                    <input type="text" id="cardNumber" placeholder="4000 1234 5678 9010" required maxlength="19" oninput="formatCardNumber(this)">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="cardExpiry">Expiration Date</label>
+                        <input type="text" id="cardExpiry" placeholder="MM/YY" required maxlength="5" oninput="formatExpiry(this)">
+                    </div>
+                    <div class="form-group">
+                        <label for="cardCvv">CVV / CVC</label>
+                        <input type="password" id="cardCvv" placeholder="•••" required maxlength="3">
+                    </div>
+                </div>
+                
+                <button type="submit" class="pay-btn" id="payButton">Pay Safely Now</button>
+            </form>
+        </div>
+
+        <!-- ABA QR Section -->
+        <div id="abaSection" class="qr-container">
+            <div class="aba-logo-text">ABA PAY</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 15px;">Simulated Instant Payment System</div>
+            <div class="qr-code">
+                <!-- Generating mock QR code using qrserver -->
+                <img id="abaQrCode" src="" alt="Scan to pay">
+            </div>
+            <div style="font-weight: 700; color: var(--text-light); font-size: 1.1rem; margin-top: 10px;" id="abaTotalDisplay">$0.00</div>
+            <p class="scan-instruction">Scan this QR Code with your ABA Mobile app to complete payment simulation.</p>
+            
+            <button type="button" class="pay-btn" onclick="simulateAbaConfirm()" style="background: linear-gradient(to right, #005f80, #0099cc); box-shadow: 0 8px 20px rgba(0, 95, 128, 0.3);">
+                ✅ Confirm ABA Payment Simulation
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const orderId = window.location.pathname.split('/').pop();
+    let currentMethod = 'card';
+    let orderAmount = 0.00;
+
+    // Load order details on page load
+    async function loadOrder() {
+        if (!orderId) {
+            alert('Invalid Order ID in URL');
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/orders/${orderId}/checkout-info`);
+            const result = await response.json();
+
+            if (!response.ok || !result.success) {
+                document.getElementById('summaryOrderId').innerText = 'Error loading order';
+                alert(result.message || 'Failed to load order');
+                return;
+            }
+
+            const order = result.data;
+            orderAmount = parseFloat(order.total_amount);
+
+            // Populate Order UI
+            document.getElementById('summaryOrderId').innerText = `ID: ${order.id}`;
+            document.getElementById('summaryAddress').innerText = order.shipping_address;
+            document.getElementById('summaryPhone').innerText = order.contact_phone;
+            document.getElementById('summaryTotal').innerText = `$${orderAmount.toFixed(2)}`;
+            document.getElementById('abaTotalDisplay').innerText = `$${orderAmount.toFixed(2)}`;
+            
+            // Set up mock QR
+            const qrText = encodeURIComponent(`aba-pay-simulation://order/${order.id}/amount/${order.total_amount}`);
+            document.getElementById('abaQrCode').src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${qrText}&color=005f80`;
+
+            const itemsList = document.getElementById('summaryItems');
+            itemsList.innerHTML = '';
+            
+            order.items.forEach(item => {
+                const li = document.createElement('li');
+                li.className = 'item-row';
+                li.innerHTML = `
+                    <span><span class="item-qty">${item.quantity}x</span>${item.name}</span>
+                    <span>$${(parseFloat(item.price) * item.quantity).toFixed(2)}</span>
+                `;
+                itemsList.appendChild(li);
+            });
+
+            // Adjust pay button text
+            document.getElementById('payButton').innerText = `Pay $${orderAmount.toFixed(2)} Now`;
+
+            // If order already paid
+            if (order.status === 'paid') {
+                showSuccessScreen('Already Paid', 'This order has already been successfully paid.');
+            }
+        } catch (err) {
+            console.error(err);
+            alert('Failed to connect to backend server');
+        }
+    }
+
+    function switchMethod(method) {
+        currentMethod = method;
+        if (method === 'card') {
+            document.getElementById('methodCard').classList.add('active');
+            document.getElementById('methodAba').classList.remove('active');
+            document.getElementById('cardSection').style.display = 'block';
+            document.getElementById('abaSection').style.display = 'none';
+        } else {
+            document.getElementById('methodCard').classList.remove('active');
+            document.getElementById('methodAba').classList.add('active');
+            document.getElementById('cardSection').style.display = 'none';
+            document.getElementById('abaSection').style.display = 'block';
+        }
+    }
+
+    // Live update credit card display
+    function updateCardDetails() {
+        const name = document.getElementById('cardName').value;
+        const number = document.getElementById('cardNumber').value;
+        const expiry = document.getElementById('cardExpiry').value;
+
+        document.getElementById('cardDisplayName').innerText = name.toUpperCase() || 'VALUED CUSTOMER';
+        document.getElementById('cardDisplayNumber').innerText = number || '•••• •••• •••• ••••';
+        document.getElementById('cardDisplayExpiry').innerText = expiry || 'MM/YY';
+    }
+
+    // Formatter logic
+    function formatCardNumber(input) {
+        let v = input.value.replace(/\s+/g, '').replace(/[^0-9]/gi, '');
+        let matches = v.match(/\d{4,16}/g);
+        let match = matches && matches[0] || '';
+        let parts = [];
+
+        for (let i = 0, len = match.length; i < len; i += 4) {
+            parts.push(match.substring(i, i + 4));
+        }
+
+        if (parts.length > 0) {
+            input.value = parts.join(' ');
+        } else {
+            input.value = v;
+        }
+        updateCardDetails();
+    }
+
+    function formatExpiry(input) {
+        let v = input.value.replace(/\s+/g, '').replace(/[^0-9]/gi, '');
+        if (v.length >= 2) {
+            input.value = v.substring(0, 2) + '/' + v.substring(2, 4);
+        } else {
+            input.value = v;
+        }
+        updateCardDetails();
+    }
+
+    // Submit payment to backend api
+    async function submitPayment(event) {
+        event.preventDefault();
+        
+        // Show processing overlay
+        showLoadingScreen();
+
+        const cardNumber = document.getElementById('cardNumber').value;
+        const intentMockId = 'intent_' + Math.random().toString(36).substring(2, 15);
+
+        try {
+            const response = await fetch(`/api/orders/${orderId}/pay`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    payment_intent: intentMockId
+                })
+            });
+
+            const result = await response.json();
+
+            // Wait 2 seconds for dramatic effect / realistic delay
+            setTimeout(() => {
+                if (response.ok && result.success) {
+                    showSuccessScreen('Payment Successful!', 'Your payment has been processed securely. Angkor Shopping Mall bot will notify you on Telegram.');
+                } else {
+                    showErrorScreen(result.message || 'Payment failed. Please check details.');
+                }
+            }, 2000);
+
+        } catch (err) {
+            setTimeout(() => {
+                showErrorScreen('Network connection failed. Could not process payment.');
+            }, 2000);
+        }
+    }
+
+    async function simulateAbaConfirm() {
+        showLoadingScreen();
+        const intentMockId = 'aba_' + Math.random().toString(36).substring(2, 15);
+
+        try {
+            const response = await fetch(`/api/orders/${orderId}/pay`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    payment_intent: intentMockId
+                })
+            });
+
+            const result = await response.json();
+
+            setTimeout(() => {
+                if (response.ok && result.success) {
+                    showSuccessScreen('ABA Pay Completed!', 'Your instant payment has been simulated successfully. Notification sent to Telegram bot.');
+                } else {
+                    showErrorScreen(result.message || 'ABA Simulation failed.');
+                }
+            }, 2000);
+
+        } catch (err) {
+            setTimeout(() => {
+                showErrorScreen('Network connection failed.');
+            }, 2000);
+        }
+    }
+
+    // Helper functions for screen toggle
+    function showLoadingScreen() {
+        const screen = document.getElementById('statusScreen');
+        screen.style.display = 'flex';
+        document.getElementById('statusSpinner').style.display = 'block';
+        document.getElementById('statusCheckmark').style.display = 'none';
+        document.getElementById('statusTitle').innerText = 'Processing Payment';
+        document.getElementById('statusMsg').innerText = 'Please do not refresh or close this window while we verify your transaction.';
+        document.getElementById('statusBtn').style.display = 'none';
+    }
+
+    function showSuccessScreen(title, msg) {
+        document.getElementById('statusSpinner').style.display = 'none';
+        const checkmark = document.getElementById('statusCheckmark');
+        checkmark.style.display = 'flex';
+        checkmark.style.color = 'var(--success)';
+        checkmark.style.borderColor = 'var(--success)';
+        checkmark.style.background = 'rgba(16, 185, 129, 0.1)';
+        checkmark.innerText = '✓';
+        document.getElementById('statusTitle').innerText = title;
+        document.getElementById('statusMsg').innerText = msg;
+        document.getElementById('statusBtn').style.display = 'block';
+    }
+
+    function showErrorScreen(msg) {
+        document.getElementById('statusSpinner').style.display = 'none';
+        const checkmark = document.getElementById('statusCheckmark');
+        checkmark.style.display = 'flex';
+        checkmark.style.color = '#ef4444';
+        checkmark.style.borderColor = '#ef4444';
+        checkmark.style.background = 'rgba(239, 68, 68, 0.1)';
+        checkmark.innerText = '✕';
+        document.getElementById('statusTitle').innerText = 'Payment Failed';
+        document.getElementById('statusMsg').innerText = msg;
+        
+        const btn = document.getElementById('statusBtn');
+        btn.innerText = 'Try Again';
+        btn.onclick = () => {
+            document.getElementById('statusScreen').style.display = 'none';
+        };
+        btn.style.display = 'block';
+    }
+
+    function closeWindow() {
+        window.close();
+        // Fallback for browsers that block window.close()
+        alert('Payment session completed. You can safely return to Telegram!');
+    }
+
+    // Init
+    loadOrder();
+</script>
+</body>
+</html>
