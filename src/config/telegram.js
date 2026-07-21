@@ -11,6 +11,33 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, {
     }
 });
 
+// Clean shutdown on process exits/restarts to avoid 409 Conflict errors
+const stopBotPolling = async () => {
+    try {
+        if (bot.isPolling()) {
+            await bot.stopPolling();
+            console.log("Telegram bot polling stopped gracefully.");
+        }
+    } catch (err) {
+        console.error("Error stopping Telegram polling:", err.message);
+    }
+};
+
+process.once('SIGINT', async () => {
+    await stopBotPolling();
+    process.exit(0);
+});
+
+process.once('SIGTERM', async () => {
+    await stopBotPolling();
+    process.exit(0);
+});
+
+process.once('SIGUSR2', async () => {
+    await stopBotPolling();
+    process.kill(process.pid, 'SIGUSR2');
+});
+
 // Checkout state tracker
 const checkoutState = {};
 

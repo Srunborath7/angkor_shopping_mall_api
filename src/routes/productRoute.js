@@ -2,14 +2,12 @@ const express = require('express');
 const router = express.Router();
 const productController = require('../controllers/productController');
 const auth = require('../middlewares/auth');
+const upload = require('../middlewares/upload');
 
-router.post('/seed', productController.seed);
-router.get('/', productController.findAll);
-router.get('/:id', productController.findOne);
-
-// Product management (requires authentication)
-router.post('/', auth, productController.create);
-router.put('/:id', auth, productController.update);
-router.delete('/:id', auth, productController.delete);
+router.post("/", upload.single('image'), productController.create);
+router.get("/", productController.findAll);
+router.get("/:id", productController.findOne);
+router.put("/:id", upload.single('image'), productController.update);
+router.delete("/:id", productController.delete);
 
 module.exports = router;

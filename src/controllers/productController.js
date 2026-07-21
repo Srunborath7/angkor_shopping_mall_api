@@ -1,113 +1,292 @@
-const { Product, Category, Brand } = require('../models/relationships');
-const { Op } = require('sequelize');
-const { successResponse, errorResponse } = require('../utils/response');
+const { Product, Category, Brand } = require("../models/relationships");
+const { Op } = require("sequelize");
+const {
+    uploadFile,
+    deleteFile
+} = require("../utils/uploadToSupabase");
+
+const {
+    successResponse,
+    errorResponse
+} = require("../utils/response");
 
 class ProductController {
+
     async create(req, res) {
         try {
-            const product = await Product.create(req.body);
-            return successResponse(res, 'Product created successfully', product);
+
+            let image = null;
+
+            if (req.file) {
+                image = await uploadFile(req.file, "products");
+            }
+
+            const data = {
+                name: req.body.name,
+                description: req.body.description,
+                price: req.body.price,
+                stock_quantity: req.body.stock_quantity,
+                category_id: req.body.category_id,
+                brand_id: req.body.brand_id,
+                is_active: req.body.is_active ?? true,
+                user_id: req.user?.id,
+
+                image_url: image?.url,
+                image_path: image?.path
+            };
+
+            const product = await Product.create(data);
+
+            return successResponse(
+                res,
+                "Product created successfully",
+                product
+            );
+
         } catch (error) {
-            return errorResponse(res, error.message);
+
+            return errorResponse(
+                res,
+                error.message
+            );
+
         }
     }
 
     async findAll(req, res) {
+
         try {
-            const { category_id, brand_id, search, page = 1, limit = 10 } = req.query;
+
+            const {
+                category_id,
+                brand_id,
+                search,
+                page = 1,
+                limit = 10
+            } = req.query;
+
             const offset = (page - 1) * limit;
 
-            const whereClause = { is_active: true };
+            const where = {
+                is_active: true
+            };
 
             if (category_id) {
-                whereClause.category_id = category_id;
+                where.category_id = category_id;
             }
 
             if (brand_id) {
-                whereClause.brand_id = brand_id;
+                where.brand_id = brand_id;
             }
 
             if (search) {
-                whereClause[Op.or] = [
-                    { name: { [Op.iLike]: `%${search}%` } },
-                    { description: { [Op.iLike]: `%${search}%` } }
+
+                where[Op.or] = [
+                    {
+                        name: {
+                            [Op.iLike]: `%${search}%`
+                        }
+                    },
+                    {
+                        description: {
+                            [Op.iLike]: `%${search}%`
+                        }
+                    }
                 ];
+
             }
 
             const { count, rows } = await Product.findAndCountAll({
-                where: whereClause,
+
+                where,
+
                 include: [
-                    { model: Category, as: 'category' },
-                    { model: Brand, as: 'brand' }
+                    {
+                        model: Category,
+                        as: "category"
+                    },
+                    {
+                        model: Brand,
+                        as: "brand"
+                    }
                 ],
+
                 limit: parseInt(limit),
                 offset: parseInt(offset),
-                order: [['created_at', 'DESC']]
+
+                order: [
+                    ["created_at", "DESC"]
+                ]
+
             });
 
-            return successResponse(res, 'Products retrieved successfully', {
-                totalItems: count,
-                products: rows,
-                totalPages: Math.ceil(count / limit),
-                currentPage: parseInt(page)
-            });
+            return successResponse(
+                res,
+                "Products fetched successfully",
+                {
+                    totalItems: count,
+                    totalPages: Math.ceil(count / limit),
+                    currentPage: parseInt(page),
+                    products: rows
+                }
+            );
+
         } catch (error) {
-            return errorResponse(res, error.message);
+
+            return errorResponse(
+                res,
+                error.message
+            );
+
         }
+
     }
 
     async findOne(req, res) {
+
         try {
+
             const product = await Product.findOne({
-                where: { id: req.params.id, is_active: true },
+
+                where: {
+                    id: req.params.id,
+                    is_active: true
+                },
+
                 include: [
-                    { model: Category, as: 'category' },
-                    { model: Brand, as: 'brand' }
+                    {
+                        model: Category,
+                        as: "category"
+                    },
+                    {
+                        model: Brand,
+                        as: "brand"
+                    }
                 ]
+
             });
 
             if (!product) {
-                return errorResponse(res, 'Product not found', 404);
+
+                return errorResponse(
+                    res,
+                    "Product not found",
+                    404
+                );
+
             }
 
-            return successResponse(res, 'Product retrieved successfully', product);
+            return successResponse(
+                res,
+                "Product fetched successfully",
+                product
+            );
+
         } catch (error) {
-            return errorResponse(res, error.message);
+
+            return errorResponse(
+                res,
+                error.message
+            );
+
         }
+
     }
 
     async update(req, res) {
-        try {
-            const [updated] = await Product.update(req.body, {
-                where: { id: req.params.id }
-            });
 
-            if (!updated) {
-                return errorResponse(res, 'Product not found or not modified', 404);
+        try {
+
+            const product = await Product.findByPk(req.params.id);
+
+            if (!product) {
+
+                return errorResponse(
+                    res,
+                    "Product not found",
+                    404
+                );
+
             }
 
-            const updatedProduct = await Product.findByPk(req.params.id);
-            return successResponse(res, 'Product updated successfully', updatedProduct);
+            const data = {
+                name: req.body.name,
+                description: req.body.description,
+                price: req.body.price,
+                stock_quantity: req.body.stock_quantity,
+                category_id: req.body.category_id,
+                brand_id: req.body.brand_id,
+                is_active: req.body.is_active
+            };
+
+            if (req.file) {
+
+                if (product.image_path) {
+                    await deleteFile(product.image_path);
+                }
+
+                const image = await uploadFile(
+                    req.file,
+                    "products"
+                );
+
+                data.image_url = image.url;
+                data.image_path = image.path;
+
+            }
+
+            await product.update(data);
+
+            return successResponse(
+                res,
+                "Product updated successfully",
+                product
+            );
+
         } catch (error) {
-            return errorResponse(res, error.message);
+
+            return errorResponse(
+                res,
+                error.message
+            );
+
         }
+
     }
 
     async delete(req, res) {
+
         try {
-            const deleted = await Product.update(
-                { is_active: false },
-                { where: { id: req.params.id } }
+
+            const product = await Product.findByPk(req.params.id);
+
+            if (!product) {
+
+                return errorResponse(
+                    res,
+                    "Product not found",
+                    404
+                );
+
+            }
+            if (product.image_path) {
+                await deleteFile(product.image_path);
+            }
+            await product.destroy();
+            return successResponse(
+                res,
+                "Product deleted successfully"
             );
 
-            if (!deleted[0]) {
-                return errorResponse(res, 'Product not found', 404);
-            }
-
-            return successResponse(res, 'Product deleted (soft delete) successfully');
         } catch (error) {
-            return errorResponse(res, error.message);
+
+            return errorResponse(
+                res,
+                error.message
+            );
+
         }
+
     }
 
     async seed(req, res) {
@@ -218,6 +397,7 @@ class ProductController {
             return errorResponse(res, error.message);
         }
     }
+
 }
 
 module.exports = new ProductController();

@@ -28,6 +28,10 @@ const Product = sequelize.define('Product', {
         type: DataTypes.STRING,
         allowNull: true,
     },
+    image_path: {
+        type: DataTypes.STRING,
+        allowNull: true,
+    },
     category_id: {
         type: DataTypes.UUID,
         allowNull: true,
