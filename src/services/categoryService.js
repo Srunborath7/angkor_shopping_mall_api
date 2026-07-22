@@ -14,25 +14,25 @@ class CategoryService {
   }
 
   async updateCategory(id, data) {
-    const Category = await Category.findByPk(id);
+    const category = await Category.findByPk(id);
 
-    if (!Category) {
+    if (!category) {
       throw new Error('Category not found');
     }
 
-    await Category.update(data);
+    await category.update(data);
 
-    return Category;
+    return category;
   }
 
   async deleteCategory(id) {
-    const Category = await Category.findByPk(id);
+    const category = await Category.findByPk(id);
 
-    if (!Category) {
+    if (!category) {
       throw new Error('Category not found');
     }
 
-    await Category.destroy();
+    await category.destroy();
 
     return true;
   }
