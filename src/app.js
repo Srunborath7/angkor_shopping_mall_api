@@ -3,6 +3,9 @@ const cors = require("cors");
 const path = require("path");
 const app = express();
 require("./models/relationships");
+const {handleTelegramWebhook} = require("./config/telegram");
+router.post("/telegram/webhook", handleTelegramWebhook);
+
 app.use(cors({
     origin: [
         "http://localhost:5173",
