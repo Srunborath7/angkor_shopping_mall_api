@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const path = require("path");
 const app = express();
+const router = express.Router();
 require("./models/relationships");
 const {handleTelegramWebhook} = require("./config/telegram");
 router.post("/telegram/webhook", handleTelegramWebhook);
