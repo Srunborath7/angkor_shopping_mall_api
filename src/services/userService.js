@@ -380,6 +380,24 @@ class UserService {
 
         return { message: "Password reset successful" };
     }
+    async getCustomers() {
+        return await User.findAll({
+            include: [
+                {
+                    model: Role,
+                    as: "roles",
+                    where: {
+                        name: "customer",
+                    },
+                    attributes: ["id", "name"],
+                    through: {
+                        attributes: [],
+                    },
+                    required: true,
+                },
+            ],
+        });
+    }
 }
 
 module.exports = new UserService();

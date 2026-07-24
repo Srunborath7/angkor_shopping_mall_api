@@ -240,6 +240,20 @@ class UserController {
             return error(res, err.message);
         }
     }
+
+    async getCustomers(req, res) {
+        try {
+            const customers = await userService.getCustomers();
+
+            return successResponse(
+                res,
+                "Customers retrieved successfully",
+                customers
+            );
+        } catch (error) {
+            return errorResponse(res, error.message);
+        }
+    }
 }
 
 module.exports = new UserController();
