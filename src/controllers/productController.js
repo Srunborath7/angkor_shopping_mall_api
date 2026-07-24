@@ -52,8 +52,91 @@ class ProductController {
 
         }
     }
-
     async findAll(req, res) {
+
+        try {
+
+            const {
+                category_id,
+                brand_id,
+                search
+            } = req.query;
+
+
+            const where = {};
+
+
+            if (category_id) {
+                where.category_id = category_id;
+            }
+
+
+            if (brand_id) {
+                where.brand_id = brand_id;
+            }
+
+
+            if (search) {
+
+                where[Op.or] = [
+                    {
+                        name: {
+                            [Op.iLike]: `%${search}%`
+                        }
+                    },
+                    {
+                        description: {
+                            [Op.iLike]: `%${search}%`
+                        }
+                    }
+                ];
+
+            }
+
+
+            const products = await Product.findAll({
+
+                where,
+
+                include: [
+                    {
+                        model: Category,
+                        as: "category"
+                    },
+                    {
+                        model: Brand,
+                        as: "brand"
+                    }
+                ],
+
+                order: [
+                    ["created_at", "DESC"]
+                ]
+
+            });
+
+
+            return successResponse(
+                res,
+                "Products fetched successfully",
+                {
+                    totalItems: products.length,
+                    products
+                }
+            );
+
+
+        } catch (error) {
+
+            return errorResponse(
+                res,
+                error.message
+            );
+
+        }
+
+    }
+    async findAllTrue(req, res) {
 
         try {
 
