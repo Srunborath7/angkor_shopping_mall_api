@@ -163,7 +163,7 @@ class OrderController {
 ━━━━━━━━━━━━━━
 
 Thank you for shopping with us! We will notify you once your order is shipped.`;
-                    
+
                     await bot.sendMessage(user.telegram_chat_id, text, { parse_mode: 'Markdown' });
                 } catch (tgError) {
                     console.error("Failed to send payment notification telegram message:", tgError.message);

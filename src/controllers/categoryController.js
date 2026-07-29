@@ -1,4 +1,7 @@
 const CategoryService = require('../services/categoryService');
+const Product = require('../models/productModel');
+const Category = require('../models/categoryModel')
+const sequelize = require('../config/db');
 const {
     successResponse,
     errorResponse
@@ -20,15 +23,39 @@ class CategoryController {
         }
     }
 
-    async findAll(req, res) {
+        async findAll(req, res) {
         try {
-            const Categorys = await CategoryService.getAllCategorys();
+
+            const categories = await Category.findAll({
+                attributes: [
+                    'id',
+                    'name',
+                    [
+                        sequelize.fn(
+                            'COUNT',
+                            sequelize.col('products.id')
+                        ),
+                        'product_count'
+                    ]
+                ],
+                include: [
+                    {
+                        model: Product,
+                        as: 'products',
+                        attributes: []
+                    }
+                ],
+                group: ['Category.id']
+            });
+
 
             return successResponse(
                 res,
-                'Categorys retrieved successfully',
-                Categorys
+                'Categories retrieved successfully',
+                categories
             );
+
+
         } catch (error) {
             return errorResponse(res, error.message);
         }
