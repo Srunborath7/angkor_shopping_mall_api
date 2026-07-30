@@ -8,6 +8,10 @@ const Brand = require('./brandModel');
 const CartItem = require('./cartItemModel');
 const Order = require('./orderModel');
 const OrderItem = require('./orderItemModel');
+const ProductVariant = require('./productVariantModel');
+const ProductDetail = require('./productDetailModel');
+const ProductImage = require('./productImageModel');
+const ProductReview = require('./productReviewModel');
 
 User.belongsToMany(Role, {
     through: UserRole,
@@ -41,6 +45,28 @@ Category.hasMany(Product, { foreignKey: 'category_id', as: 'products' });
 Product.belongsTo(Brand, { foreignKey: 'brand_id', as: 'brand' });
 Brand.hasMany(Product, { foreignKey: 'brand_id', as: 'products' });
 
+// Product Variant Associations
+Product.hasMany(ProductVariant, { foreignKey: 'product_id', as: 'variants', onDelete: 'CASCADE' });
+ProductVariant.belongsTo(Product, { foreignKey: 'product_id', as: 'product' });
+
+// Product Detail Associations
+Product.hasOne(ProductDetail, { foreignKey: 'product_id', as: 'detail', onDelete: 'CASCADE' });
+ProductDetail.belongsTo(Product, { foreignKey: 'product_id', as: 'product' });
+
+// Product Image Associations
+Product.hasMany(ProductImage, { foreignKey: 'product_id', as: 'images', onDelete: 'CASCADE' });
+ProductImage.belongsTo(Product, { foreignKey: 'product_id', as: 'product' });
+
+ProductVariant.hasMany(ProductImage, { foreignKey: 'product_variant_id', as: 'images', onDelete: 'CASCADE' });
+ProductImage.belongsTo(ProductVariant, { foreignKey: 'product_variant_id', as: 'variant' });
+
+// Product Review Associations
+Product.hasMany(ProductReview, { foreignKey: 'product_id', as: 'reviews', onDelete: 'CASCADE' });
+ProductReview.belongsTo(Product, { foreignKey: 'product_id', as: 'product' });
+
+User.hasMany(ProductReview, { foreignKey: 'user_id', as: 'reviews', onDelete: 'CASCADE' });
+ProductReview.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
+
 // Cart Item Associations
 User.hasMany(CartItem, { foreignKey: 'user_id', as: 'cartItems' });
 CartItem.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
@@ -68,5 +94,9 @@ module.exports = {
     Brand,
     CartItem,
     Order,
-    OrderItem
+    OrderItem,
+    ProductVariant,
+    ProductDetail,
+    ProductImage,
+    ProductReview
 };

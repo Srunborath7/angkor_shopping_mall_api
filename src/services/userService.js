@@ -13,7 +13,9 @@ const {
     generateRefreshToken,
     generateResetToken,
     verifyResetToken,
+    verifyRefreshToken,
 } = require('../utils/jwt');
+const { sendOtpEmail } = require('../utils/mailer');
 
 class UserService {
     async createUser(data) {

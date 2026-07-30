@@ -1,24 +1,43 @@
-const { Product, Category, Brand } = require("../models/relationships");
-const { Op } = require("sequelize");
-const {
-    uploadFile,
-    deleteFile
-} = require("../utils/uploadToSupabase");
-
-const {
-    successResponse,
-    errorResponse
-} = require("../utils/response");
+const productService = require("../services/productService");
+const { Category, Brand, Product, ProductImage } = require("../models/relationships");
+const { uploadFile, deleteFile } = require("../utils/uploadToSupabase");
+const { successResponse, errorResponse } = require("../utils/response");
 
 class ProductController {
 
     async create(req, res) {
         try {
-
             let image = null;
 
             if (req.file) {
                 image = await uploadFile(req.file, "products");
+            }
+
+            let detail = req.body.detail;
+            if (typeof detail === "string") {
+                try {
+                    detail = JSON.parse(detail);
+                } catch (e) {
+                    detail = undefined;
+                }
+            }
+
+            let variants = req.body.variants;
+            if (typeof variants === "string") {
+                try {
+                    variants = JSON.parse(variants);
+                } catch (e) {
+                    variants = undefined;
+                }
+            }
+
+            let images = req.body.images;
+            if (typeof images === "string") {
+                try {
+                    images = JSON.parse(images);
+                } catch (e) {
+                    images = undefined;
+                }
             }
 
             const data = {
@@ -29,92 +48,31 @@ class ProductController {
                 category_id: req.body.category_id,
                 brand_id: req.body.brand_id,
                 is_active: req.body.is_active ?? true,
-                user_id: req.user?.id,
-
-                image_url: image?.url,
-                image_path: image?.path
+                image_url: image?.url || req.body.image_url,
+                image_path: image?.path || req.body.image_path,
+                detail,
+                variants,
+                images
             };
 
-            const product = await Product.create(data);
+            const product = await productService.create(data);
 
             return successResponse(
                 res,
                 "Product created successfully",
-                product
+                product,
+                201
             );
 
         } catch (error) {
-
-            return errorResponse(
-                res,
-                error.message
-            );
-
+            return errorResponse(res, error.message);
         }
     }
+
     async findAll(req, res) {
-
         try {
-
-            const {
-                category_id,
-                brand_id,
-                search
-            } = req.query;
-
-
-            const where = {};
-
-
-            if (category_id) {
-                where.category_id = category_id;
-            }
-
-
-            if (brand_id) {
-                where.brand_id = brand_id;
-            }
-
-
-            if (search) {
-
-                where[Op.or] = [
-                    {
-                        name: {
-                            [Op.iLike]: `%${search}%`
-                        }
-                    },
-                    {
-                        description: {
-                            [Op.iLike]: `%${search}%`
-                        }
-                    }
-                ];
-
-            }
-
-
-            const products = await Product.findAll({
-
-                where,
-
-                include: [
-                    {
-                        model: Category,
-                        as: "category"
-                    },
-                    {
-                        model: Brand,
-                        as: "brand"
-                    }
-                ],
-
-                order: [
-                    ["created_at", "DESC"]
-                ]
-
-            });
-
+            const { category_id, brand_id, search } = req.query;
+            const products = await productService.findAll({ category_id, brand_id, search });
 
             return successResponse(
                 res,
@@ -124,252 +82,122 @@ class ProductController {
                     products
                 }
             );
-
-
         } catch (error) {
-
-            return errorResponse(
-                res,
-                error.message
-            );
-
+            return errorResponse(res, error.message);
         }
-
     }
+
     async findAllTrue(req, res) {
-
         try {
-
-            const {
-                category_id,
-                brand_id,
-                search,
-                page = 1,
-                limit = 10
-            } = req.query;
-
-            const offset = (page - 1) * limit;
-
-            const where = {
-                is_active: true
-            };
-
-            if (category_id) {
-                where.category_id = category_id;
-            }
-
-            if (brand_id) {
-                where.brand_id = brand_id;
-            }
-
-            if (search) {
-
-                where[Op.or] = [
-                    {
-                        name: {
-                            [Op.iLike]: `%${search}%`
-                        }
-                    },
-                    {
-                        description: {
-                            [Op.iLike]: `%${search}%`
-                        }
-                    }
-                ];
-
-            }
-
-            const { count, rows } = await Product.findAndCountAll({
-
-                where,
-
-                include: [
-                    {
-                        model: Category,
-                        as: "category"
-                    },
-                    {
-                        model: Brand,
-                        as: "brand"
-                    }
-                ],
-
-                limit: parseInt(limit),
-                offset: parseInt(offset),
-
-                order: [
-                    ["created_at", "DESC"]
-                ]
-
-            });
+            const { category_id, brand_id, search, page = 1, limit = 10 } = req.query;
+            const result = await productService.findAllPaged({ category_id, brand_id, search, page, limit });
 
             return successResponse(
                 res,
                 "Products fetched successfully",
-                {
-                    totalItems: count,
-                    totalPages: Math.ceil(count / limit),
-                    currentPage: parseInt(page),
-                    products: rows
-                }
+                result
             );
-
         } catch (error) {
-
-            return errorResponse(
-                res,
-                error.message
-            );
-
+            return errorResponse(res, error.message);
         }
-
     }
 
     async findOne(req, res) {
-
         try {
-
-            const product = await Product.findOne({
-
-                where: {
-                    id: req.params.id,
-                    is_active: true
-                },
-
-                include: [
-                    {
-                        model: Category,
-                        as: "category"
-                    },
-                    {
-                        model: Brand,
-                        as: "brand"
-                    }
-                ]
-
-            });
-
-            if (!product) {
-
-                return errorResponse(
-                    res,
-                    "Product not found",
-                    404
-                );
-
-            }
-
+            const product = await productService.findOne(req.params.id);
             return successResponse(
                 res,
                 "Product fetched successfully",
                 product
             );
-
         } catch (error) {
-
             return errorResponse(
                 res,
-                error.message
+                error.message,
+                error.message === "Product not found" ? 404 : 400
             );
-
         }
-
     }
 
     async update(req, res) {
-
         try {
-
             const product = await Product.findByPk(req.params.id);
-
             if (!product) {
-
-                return errorResponse(
-                    res,
-                    "Product not found",
-                    404
-                );
-
+                return errorResponse(res, "Product not found", 404);
             }
 
             const data = {
-                name: req.body.name,
-                description: req.body.description,
-                price: req.body.price,
-                stock_quantity: req.body.stock_quantity,
-                category_id: req.body.category_id,
-                brand_id: req.body.brand_id,
-                is_active: req.body.is_active
+                name: req.body.name ?? product.name,
+                description: req.body.description ?? product.description,
+                price: req.body.price ?? product.price,
+                stock_quantity: req.body.stock_quantity ?? product.stock_quantity,
+                category_id: req.body.category_id ?? product.category_id,
+                brand_id: req.body.brand_id ?? product.brand_id,
+                is_active: req.body.is_active ?? product.is_active
             };
 
             if (req.file) {
-
-                if (product.image_path) {
-                    await deleteFile(product.image_path);
+                const primaryImage = await ProductImage.findOne({
+                    where: { product_id: req.params.id, is_primary: true }
+                });
+                if (primaryImage && primaryImage.image_path) {
+                    try {
+                        await deleteFile(primaryImage.image_path);
+                    } catch (e) {
+                        console.error("Error deleting old image:", e.message);
+                    }
                 }
 
-                const image = await uploadFile(
-                    req.file,
-                    "products"
-                );
-
+                const image = await uploadFile(req.file, "products");
                 data.image_url = image.url;
                 data.image_path = image.path;
-
+            } else {
+                if (req.body.image_url !== undefined) {
+                    data.image_url = req.body.image_url;
+                }
+                if (req.body.image_path !== undefined) {
+                    data.image_path = req.body.image_path;
+                }
             }
 
-            await product.update(data);
+            const updatedProduct = await productService.update(req.params.id, data);
 
             return successResponse(
                 res,
                 "Product updated successfully",
-                product
+                updatedProduct
             );
-
         } catch (error) {
-
-            return errorResponse(
-                res,
-                error.message
-            );
-
+            return errorResponse(res, error.message);
         }
-
     }
 
     async delete(req, res) {
-
         try {
-
             const product = await Product.findByPk(req.params.id);
-
             if (!product) {
-
-                return errorResponse(
-                    res,
-                    "Product not found",
-                    404
-                );
-
+                return errorResponse(res, "Product not found", 404);
             }
-            if (product.image_path) {
-                await deleteFile(product.image_path);
-            }
-            await product.destroy();
-            return successResponse(
-                res,
-                "Product deleted successfully"
-            );
 
+            const galleryImages = await ProductImage.findAll({
+                where: { product_id: product.id }
+            });
+
+            for (const img of galleryImages) {
+                if (img.image_path) {
+                    try {
+                        await deleteFile(img.image_path);
+                    } catch (e) {
+                        console.error("Error deleting image file:", e.message);
+                    }
+                }
+            }
+
+            const result = await productService.destroy(req.params.id);
+            return successResponse(res, result.message);
         } catch (error) {
-
-            return errorResponse(
-                res,
-                error.message
-            );
-
+            return errorResponse(res, error.message);
         }
-
     }
 
     async seed(req, res) {
@@ -471,6 +299,19 @@ class ProductController {
             ];
 
             const createdProducts = await Product.bulkCreate(mockProducts);
+
+            for (let i = 0; i < createdProducts.length; i++) {
+                const prod = createdProducts[i];
+                const mock = mockProducts[i];
+                if (mock.image_url) {
+                    await ProductImage.create({
+                        product_id: prod.id,
+                        image_url: mock.image_url,
+                        is_primary: true
+                    });
+                }
+            }
+
             return successResponse(res, 'Mock products seeded successfully', {
                 categoriesCreated: 3,
                 brandsCreated: 4,

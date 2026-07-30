@@ -1,16 +1,235 @@
-const Product = require('../models/productModel');
+const sequelize = require('../config/db');
+const { Product, ProductVariant, ProductDetail, ProductImage, Category, Brand, ProductReview, User } = require('../models/relationships');
+const { Op } = require('sequelize');
 
 class ProductService {
-    async index() {
-        return await Product.findAll();
+    async findAll(filters = {}) {
+        const { category_id, brand_id, search } = filters;
+        const where = {};
+
+        if (category_id) {
+            where.category_id = category_id;
+        }
+
+        if (brand_id) {
+            where.brand_id = brand_id;
+        }
+
+        if (search) {
+            where[Op.or] = [
+                { name: { [Op.iLike]: `%${search}%` } },
+                { description: { [Op.iLike]: `%${search}%` } }
+            ];
+        }
+
+        return await Product.findAll({
+            where,
+            include: [
+                { model: Category, as: 'category' },
+                { model: Brand, as: 'brand' }
+            ],
+            order: [["created_at", "DESC"]]
+        });
     }
 
-    async show(id) {
-        return await Product.findByPk(id);
+    async findAllPaged(filters = {}) {
+        const { category_id, brand_id, search, page = 1, limit = 10 } = filters;
+        const offset = (page - 1) * limit;
+        const where = { is_active: true };
+
+        if (category_id) {
+            where.category_id = category_id;
+        }
+
+        if (brand_id) {
+            where.brand_id = brand_id;
+        }
+
+        if (search) {
+            where[Op.or] = [
+                { name: { [Op.iLike]: `%${search}%` } },
+                { description: { [Op.iLike]: `%${search}%` } }
+            ];
+        }
+
+        const { count, rows } = await Product.findAndCountAll({
+            where,
+            include: [
+                { model: Category, as: 'category' },
+                { model: Brand, as: 'brand' }
+            ],
+            limit: parseInt(limit),
+            offset: parseInt(offset),
+            order: [["created_at", "DESC"]]
+        });
+
+        return {
+            totalItems: count,
+            totalPages: Math.ceil(count / limit),
+            currentPage: parseInt(page),
+            products: rows
+        };
+    }
+
+    async findOne(id) {
+        const product = await Product.findOne({
+            where: {
+                id,
+                is_active: true
+            },
+            include: [
+                { model: Category, as: 'category' },
+                { model: Brand, as: 'brand' },
+                {
+                    model: ProductVariant,
+                    as: 'variants',
+                    include: [{ model: ProductImage, as: 'images' }]
+                },
+                { model: ProductDetail, as: 'detail' },
+                { model: ProductImage, as: 'images' },
+                {
+                    model: ProductReview,
+                    as: 'reviews',
+                    include: [{ model: User, as: 'user', attributes: ['id', 'name'] }]
+                }
+            ]
+        });
+
+        if (!product) {
+            throw new Error("Product not found");
+        }
+
+        const productJson = product.toJSON();
+        const reviews = productJson.reviews || [];
+        const totalReviews = reviews.length;
+        const averageRating = totalReviews > 0
+            ? parseFloat((reviews.reduce((sum, r) => sum + r.rating, 0) / totalReviews).toFixed(1))
+            : 0;
+
+        productJson.ratingSummary = {
+            averageRating,
+            totalReviews
+        };
+
+        return productJson;
     }
 
     async create(data) {
-        return await Product.create(data);
+        const t = await sequelize.transaction();
+
+        try {
+            // 1. Create Base Product
+            const baseProductData = {
+                name: data.name,
+                description: data.description,
+                price: data.price,
+                stock_quantity: data.stock_quantity || 0,
+                category_id: data.category_id,
+                brand_id: data.brand_id,
+                is_active: data.is_active ?? true
+            };
+
+            const product = await Product.create(baseProductData, { transaction: t });
+
+            // Automatically insert main image into ProductImage table if present
+            if (data.image_url) {
+                await ProductImage.create({
+                    product_id: product.id,
+                    image_url: data.image_url,
+                    image_path: data.image_path || null,
+                    is_primary: true
+                }, { transaction: t });
+            }
+
+            // 2. Create Details if provided
+            if (data.detail) {
+                let parsedSpecs = data.detail.specifications;
+                if (typeof parsedSpecs === 'string') {
+                    try {
+                        parsedSpecs = JSON.parse(parsedSpecs);
+                    } catch (e) {
+                        parsedSpecs = {};
+                    }
+                }
+                await ProductDetail.create({
+                    product_id: product.id,
+                    long_description: data.detail.long_description,
+                    specifications: parsedSpecs || {},
+                    warranty_info: data.detail.warranty_info,
+                    shipping_info: data.detail.shipping_info
+                }, { transaction: t });
+            }
+
+            // 3. Create Variants if provided
+            if (data.variants && Array.isArray(data.variants)) {
+                for (const variant of data.variants) {
+                    let parsedAttrs = variant.attributes;
+                    if (typeof parsedAttrs === 'string') {
+                        try {
+                            parsedAttrs = JSON.parse(parsedAttrs);
+                        } catch (e) {
+                            parsedAttrs = {};
+                        }
+                    }
+
+                    // Check duplicate SKU in transaction
+                    const existingSku = await ProductVariant.findOne({
+                        where: { sku: variant.sku },
+                        transaction: t
+                    });
+                    if (existingSku) {
+                        throw new Error(`SKU ${variant.sku} already exists`);
+                    }
+
+                    const pv = await ProductVariant.create({
+                        product_id: product.id,
+                        sku: variant.sku,
+                        price: variant.price || null,
+                        stock_quantity: variant.stock_quantity || 0,
+                        attributes: parsedAttrs || {},
+                        is_active: variant.is_active ?? true
+                    }, { transaction: t });
+
+                    if (variant.image_url) {
+                        await ProductImage.create({
+                            product_id: product.id,
+                            product_variant_id: pv.id,
+                            image_url: variant.image_url,
+                            image_path: variant.image_path || null,
+                            is_primary: false
+                        }, { transaction: t });
+                    }
+                }
+            }
+
+            // 4. Create Gallery Images if provided
+            if (data.images && Array.isArray(data.images)) {
+                for (const img of data.images) {
+                    await ProductImage.create({
+                        product_id: product.id,
+                        product_variant_id: img.product_variant_id || null,
+                        image_url: img.image_url,
+                        image_path: img.image_path || null,
+                        is_primary: img.is_primary === true || img.is_primary === 'true'
+                    }, { transaction: t });
+                }
+            }
+
+            await t.commit();
+
+            return await Product.findByPk(product.id, {
+                include: [
+                    { model: Category, as: 'category' },
+                    { model: Brand, as: 'brand' },
+                    { model: ProductVariant, as: 'variants' },
+                    { model: ProductDetail, as: 'detail' },
+                    { model: ProductImage, as: 'images' }
+                ]
+            });
+        } catch (error) {
+            await t.rollback();
+            throw error;
+        }
     }
 
     async update(id, data) {
@@ -20,8 +239,40 @@ class ProductService {
             throw new Error('Product not found');
         }
 
-        await product.update(data);
-        return product;
+        const t = await sequelize.transaction();
+        try {
+            await product.update(data, { transaction: t });
+
+            if (data.image_url) {
+                // Set other images of this product to not primary
+                await ProductImage.update(
+                    { is_primary: false },
+                    { where: { product_id: id }, transaction: t }
+                );
+
+                // Find or create primary product image
+                const [prodImg, created] = await ProductImage.findOrCreate({
+                    where: { product_id: id, is_primary: true },
+                    defaults: {
+                        image_url: data.image_url,
+                        image_path: data.image_path || null
+                    },
+                    transaction: t
+                });
+
+                if (!created) {
+                    await prodImg.update({
+                        image_url: data.image_url,
+                        image_path: data.image_path || null
+                    }, { transaction: t });
+                }
+            }
+            await t.commit();
+            return product;
+        } catch (err) {
+            await t.rollback();
+            throw err;
+        }
     }
 
     async destroy(id) {

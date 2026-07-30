@@ -237,7 +237,7 @@ class UserController {
             );
             return successResponse(res, "Password reset success", result);
         } catch (err) {
-            return error(res, err.message);
+            return errorResponse(res, err.message);
         }
     }
 
