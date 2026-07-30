@@ -74,8 +74,7 @@ class ProductService {
     async findOne(id) {
         const product = await Product.findOne({
             where: {
-                id,
-                is_active: true
+                id
             },
             include: [
                 { model: Category, as: 'category' },
