@@ -136,10 +136,15 @@ class ProductController {
                 is_active: req.body.is_active ?? product.is_active
             };
 
+            // Update basic product fields first
+            const updatedProduct = await productService.update(req.params.id, data);
+
+            // Handle primary image replacement separately, in ProductImage table
             if (req.file) {
                 const primaryImage = await ProductImage.findOne({
                     where: { product_id: req.params.id, is_primary: true }
                 });
+
                 if (primaryImage && primaryImage.image_path) {
                     try {
                         await deleteFile(primaryImage.image_path);
@@ -149,23 +154,50 @@ class ProductController {
                 }
 
                 const image = await uploadFile(req.file, "products");
-                data.image_url = image.url;
-                data.image_path = image.path;
-            } else {
-                if (req.body.image_url !== undefined) {
-                    data.image_url = req.body.image_url;
+
+                if (primaryImage) {
+                    // reuse the existing primary row
+                    await primaryImage.update({
+                        image_url: image.url,
+                        image_path: image.path
+                    });
+                } else {
+                    // no primary image existed yet — create one
+                    await ProductImage.create({
+                        product_id: req.params.id,
+                        image_url: image.url,
+                        image_path: image.path,
+                        is_primary: true
+                    });
                 }
-                if (req.body.image_path !== undefined) {
-                    data.image_path = req.body.image_path;
+            } else if (req.body.image_url !== undefined || req.body.image_path !== undefined) {
+                // allow replacing the primary image by URL instead of file upload
+                const primaryImage = await ProductImage.findOne({
+                    where: { product_id: req.params.id, is_primary: true }
+                });
+
+                if (primaryImage) {
+                    await primaryImage.update({
+                        image_url: req.body.image_url ?? primaryImage.image_url,
+                        image_path: req.body.image_path ?? primaryImage.image_path
+                    });
+                } else {
+                    await ProductImage.create({
+                        product_id: req.params.id,
+                        image_url: req.body.image_url,
+                        image_path: req.body.image_path,
+                        is_primary: true
+                    });
                 }
             }
 
-            const updatedProduct = await productService.update(req.params.id, data);
+            // re-fetch so response includes updated images
+            const finalProduct = await productService.findOne(req.params.id);
 
             return successResponse(
                 res,
                 "Product updated successfully",
-                updatedProduct
+                finalProduct
             );
         } catch (error) {
             return errorResponse(res, error.message);
@@ -199,7 +231,6 @@ class ProductController {
             return errorResponse(res, error.message);
         }
     }
-
     async seed(req, res) {
         try {
             // Find or create default categories
