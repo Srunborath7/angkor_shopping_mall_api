@@ -22,14 +22,17 @@ class ProductService {
             ];
         }
 
-        return await Product.findAll({
+        const products = await Product.findAll({
             where,
             include: [
                 { model: Category, as: 'category' },
-                { model: Brand, as: 'brand' }
+                { model: Brand, as: 'brand' },
+                { model: ProductImage, as: 'images' }
             ],
             order: [["created_at", "DESC"]]
         });
+
+        return products.map((p) => this._withRatingSummary(p));
     }
 
     async findAllPaged(filters = {}) {
@@ -56,19 +59,26 @@ class ProductService {
             where,
             include: [
                 { model: Category, as: 'category' },
-                { model: Brand, as: 'brand' }
+                { model: Brand, as: 'brand' },
+                { model: ProductImage, as: 'images' }
             ],
             limit: parseInt(limit),
             offset: parseInt(offset),
-            order: [["created_at", "DESC"]]
+            order: [["created_at", "DESC"]],
+            distinct: true
         });
 
         return {
             totalItems: count,
             totalPages: Math.ceil(count / limit),
             currentPage: parseInt(page),
-            products: rows
+            products: rows.map((p) => this._withRatingSummary(p))
         };
+    }
+    _withRatingSummary(product) {
+        const json = product.toJSON();
+        json.ratingSummary = { averageRating: 0, totalReviews: 0 };
+        return json;
     }
 
     async findOne(id) {
