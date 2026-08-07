@@ -1,4 +1,5 @@
 const Brand = require('../models/brandModel');
+const User = require('../models/userModel');
 
 class BrandService {
 
@@ -7,11 +8,21 @@ class BrandService {
   }
 
   async getAllBrands() {
-    return await Brand.findAll();
+    return await Brand.findAll({
+      include: [
+        { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
+        { model: User, as: 'updater', attributes: ['id', 'name', 'email'] }
+      ]
+    });
   }
 
   async getBrandById(id) {
-    return await Brand.findByPk(id);
+    return await Brand.findByPk(id, {
+      include: [
+        { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
+        { model: User, as: 'updater', attributes: ['id', 'name', 'email'] }
+      ]
+    });
   }
 
   async updateBrand(id, data) {
@@ -23,7 +34,7 @@ class BrandService {
 
     await brand.update(data);
 
-    return brand;
+    return await this.getBrandById(id);
   }
 
   async deleteBrand(id) {

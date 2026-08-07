@@ -12,7 +12,11 @@ const ProductVariant = require('./productVariantModel');
 const ProductDetail = require('./productDetailModel');
 const ProductImage = require('./productImageModel');
 const ProductReview = require('./productReviewModel');
+const Supplier = require('./supplierModel');
+const PurchaseOrder = require('./purchaseOrderModel');
+const PurchaseOrderItem = require('./purchaseOrderItemModel');
 
+// User & Role Associations
 User.belongsToMany(Role, {
     through: UserRole,
     foreignKey: 'user_id',
@@ -37,6 +41,18 @@ RefreshToken.belongsTo(User, {
     foreignKey: 'user_id',
     as: 'user'
 });
+
+// Audit Trails (created_by / updated_by)
+const addAuditAssociations = (Model) => {
+    Model.belongsTo(User, { foreignKey: 'created_by', as: 'creator' });
+    Model.belongsTo(User, { foreignKey: 'updated_by', as: 'updater' });
+};
+
+addAuditAssociations(Category);
+addAuditAssociations(Brand);
+addAuditAssociations(Product);
+addAuditAssociations(Supplier);
+addAuditAssociations(PurchaseOrder);
 
 // Product Associations
 Product.belongsTo(Category, { foreignKey: 'category_id', as: 'category' });
@@ -84,6 +100,19 @@ OrderItem.belongsTo(Order, { foreignKey: 'order_id', as: 'order' });
 Product.hasMany(OrderItem, { foreignKey: 'product_id', as: 'orderItems' });
 OrderItem.belongsTo(Product, { foreignKey: 'product_id', as: 'product' });
 
+// Supplier & Purchase Order Associations
+Supplier.hasMany(PurchaseOrder, { foreignKey: 'supplier_id', as: 'purchaseOrders' });
+PurchaseOrder.belongsTo(Supplier, { foreignKey: 'supplier_id', as: 'supplier' });
+
+PurchaseOrder.hasMany(PurchaseOrderItem, { foreignKey: 'purchase_order_id', as: 'items', onDelete: 'CASCADE' });
+PurchaseOrderItem.belongsTo(PurchaseOrder, { foreignKey: 'purchase_order_id', as: 'purchaseOrder' });
+
+Product.hasMany(PurchaseOrderItem, { foreignKey: 'product_id', as: 'purchaseItems' });
+PurchaseOrderItem.belongsTo(Product, { foreignKey: 'product_id', as: 'product' });
+
+ProductVariant.hasMany(PurchaseOrderItem, { foreignKey: 'product_variant_id', as: 'purchaseItems' });
+PurchaseOrderItem.belongsTo(ProductVariant, { foreignKey: 'product_variant_id', as: 'variant' });
+
 module.exports = {
     User,
     Role,
@@ -98,5 +127,8 @@ module.exports = {
     ProductVariant,
     ProductDetail,
     ProductImage,
-    ProductReview
+    ProductReview,
+    Supplier,
+    PurchaseOrder,
+    PurchaseOrderItem
 };

@@ -34,6 +34,8 @@ const productVariantRoutes = require("./routes/productVariantRoute");
 const productDetailRoutes = require("./routes/productDetailRoute");
 const productImageRoutes = require("./routes/productImageRoute");
 const productReviewRoutes = require("./routes/productReviewRoute");
+const supplierRoutes = require("./routes/supplierRoute");
+const purchaseOrderRoutes = require("./routes/purchaseOrderRoute");
 
 app.get("/", (req, res) => {
   res.status(200).json({
@@ -55,6 +57,8 @@ app.use("/api/products", productRoutes);
 app.use("/api/cart", cartRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/recommendations", recommendationRoutes);
+app.use("/api/suppliers", supplierRoutes);
+app.use("/api/purchase-orders", purchaseOrderRoutes);
 app.use("/api", productVariantRoutes);
 app.use("/api", productDetailRoutes);
 app.use("/api", productImageRoutes);

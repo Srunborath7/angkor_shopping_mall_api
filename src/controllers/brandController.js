@@ -1,5 +1,4 @@
 const BrandService = require('../services/brandService');
-
 const {
     successResponse,
     errorResponse
@@ -9,7 +8,12 @@ class BrandController {
 
     async create(req, res) {
         try {
-            const brand = await BrandService.createBrand(req.body);
+            const data = { ...req.body };
+            if (req.user && req.user.id) {
+                data.created_by = req.user.id;
+            }
+
+            const brand = await BrandService.createBrand(data);
 
             return successResponse(
                 res,
@@ -55,9 +59,14 @@ class BrandController {
 
     async update(req, res) {
         try {
+            const data = { ...req.body };
+            if (req.user && req.user.id) {
+                data.updated_by = req.user.id;
+            }
+
             const brand = await BrandService.updateBrand(
                 req.params.id,
-                req.body
+                data
             );
 
             return successResponse(

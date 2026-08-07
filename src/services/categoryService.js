@@ -1,4 +1,5 @@
 const Category = require('../models/categoryModel');
+const User = require('../models/userModel');
 
 class CategoryService {
   async createCategory(data) {
@@ -6,11 +7,21 @@ class CategoryService {
   }
 
   async getAllCategorys() {
-    return await Category.findAll();
+    return await Category.findAll({
+      include: [
+        { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
+        { model: User, as: 'updater', attributes: ['id', 'name', 'email'] }
+      ]
+    });
   }
 
   async getCategoryById(id) {
-    return await Category.findByPk(id);
+    return await Category.findByPk(id, {
+      include: [
+        { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
+        { model: User, as: 'updater', attributes: ['id', 'name', 'email'] }
+      ]
+    });
   }
 
   async updateCategory(id, data) {
@@ -22,7 +33,7 @@ class CategoryService {
 
     await category.update(data);
 
-    return category;
+    return await this.getCategoryById(id);
   }
 
   async deleteCategory(id) {

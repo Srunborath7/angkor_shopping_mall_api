@@ -15,6 +15,14 @@ const Role = sequelize.define('Category',{
     note: {
         type: DataTypes.STRING,
         allowNull: true,
+    },
+    created_by: {
+        type: DataTypes.UUID,
+        allowNull: true,
+    },
+    updated_by: {
+        type: DataTypes.UUID,
+        allowNull: true,
     }
   },
   {

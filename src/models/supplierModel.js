@@ -1,44 +1,49 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/db');
 
-const Brand = sequelize.define('Brand', {
+const Supplier = sequelize.define('Supplier', {
     id: {
         type: DataTypes.UUID,
         defaultValue: DataTypes.UUIDV4,
         primaryKey: true,
     },
-
     name: {
         type: DataTypes.STRING,
         allowNull: false,
-        unique: true,
     },
-
-    description: {
+    contact_person: {
         type: DataTypes.STRING,
         allowNull: true,
     },
-
+    email: {
+        type: DataTypes.STRING,
+        allowNull: true,
+    },
+    phone: {
+        type: DataTypes.STRING,
+        allowNull: true,
+    },
+    address: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+    },
     is_active: {
         type: DataTypes.BOOLEAN,
         defaultValue: true,
     },
-
     created_by: {
         type: DataTypes.UUID,
         allowNull: true,
     },
-
     updated_by: {
         type: DataTypes.UUID,
         allowNull: true,
     }
-
 }, {
-    tableName: 'brands',
+    tableName: 'suppliers',
     timestamps: true,
     createdAt: 'created_at',
     updatedAt: 'updated_at',
 });
 
-module.exports = Brand;
+module.exports = Supplier;

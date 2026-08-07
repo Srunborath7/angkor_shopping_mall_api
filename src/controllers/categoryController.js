@@ -1,6 +1,7 @@
 const CategoryService = require('../services/categoryService');
 const Product = require('../models/productModel');
-const Category = require('../models/categoryModel')
+const Category = require('../models/categoryModel');
+const User = require('../models/userModel');
 const sequelize = require('../config/db');
 const {
     successResponse,
@@ -11,25 +12,34 @@ class CategoryController {
 
     async create(req, res) {
         try {
-            const Category = await CategoryService.createCategory(req.body);
+            const data = { ...req.body };
+            if (req.user && req.user.id) {
+                data.created_by = req.user.id;
+            }
+
+            const category = await CategoryService.createCategory(data);
 
             return successResponse(
                 res,
                 'Category created successfully',
-                Category
+                category
             );
         } catch (error) {
             return errorResponse(res, error.message);
         }
     }
 
-        async findAll(req, res) {
+    async findAll(req, res) {
         try {
-
             const categories = await Category.findAll({
                 attributes: [
                     'id',
                     'name',
+                    'note',
+                    'created_by',
+                    'updated_by',
+                    'created_at',
+                    'updated_at',
                     [
                         sequelize.fn(
                             'COUNT',
@@ -43,19 +53,26 @@ class CategoryController {
                         model: Product,
                         as: 'products',
                         attributes: []
+                    },
+                    {
+                        model: User,
+                        as: 'creator',
+                        attributes: ['id', 'name', 'email']
+                    },
+                    {
+                        model: User,
+                        as: 'updater',
+                        attributes: ['id', 'name', 'email']
                     }
                 ],
-                group: ['Category.id']
+                group: ['Category.id', 'creator.id', 'updater.id']
             });
-
 
             return successResponse(
                 res,
                 'Categories retrieved successfully',
                 categories
             );
-
-
         } catch (error) {
             return errorResponse(res, error.message);
         }
@@ -63,16 +80,16 @@ class CategoryController {
 
     async findOne(req, res) {
         try {
-            const Category = await CategoryService.getCategoryById(req.params.id);
+            const category = await CategoryService.getCategoryById(req.params.id);
 
-            if (!Category) {
+            if (!category) {
                 return errorResponse(res, 'Category not found');
             }
 
             return successResponse(
                 res,
                 'Category retrieved successfully',
-                Category
+                category
             );
         } catch (error) {
             return errorResponse(res, error.message);
@@ -81,15 +98,20 @@ class CategoryController {
 
     async update(req, res) {
         try {
-            const Category = await CategoryService.updateCategory(
+            const data = { ...req.body };
+            if (req.user && req.user.id) {
+                data.updated_by = req.user.id;
+            }
+
+            const category = await CategoryService.updateCategory(
                 req.params.id,
-                req.body
+                data
             );
 
             return successResponse(
                 res,
                 'Category updated successfully',
-                Category
+                category
             );
         } catch (error) {
             return errorResponse(res, error.message);

@@ -27,7 +27,9 @@ class ProductService {
             include: [
                 { model: Category, as: 'category' },
                 { model: Brand, as: 'brand' },
-                { model: ProductImage, as: 'images' }
+                { model: ProductImage, as: 'images' },
+                { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
+                { model: User, as: 'updater', attributes: ['id', 'name', 'email'] }
             ],
             order: [["created_at", "DESC"]]
         });
@@ -60,7 +62,9 @@ class ProductService {
             include: [
                 { model: Category, as: 'category' },
                 { model: Brand, as: 'brand' },
-                { model: ProductImage, as: 'images' }
+                { model: ProductImage, as: 'images' },
+                { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
+                { model: User, as: 'updater', attributes: ['id', 'name', 'email'] }
             ],
             limit: parseInt(limit),
             offset: parseInt(offset),
@@ -75,6 +79,7 @@ class ProductService {
             products: rows.map((p) => this._withRatingSummary(p))
         };
     }
+
     _withRatingSummary(product) {
         const json = product.toJSON();
         json.ratingSummary = { averageRating: 0, totalReviews: 0 };
@@ -100,7 +105,9 @@ class ProductService {
                     model: ProductReview,
                     as: 'reviews',
                     include: [{ model: User, as: 'user', attributes: ['id', 'name'] }]
-                }
+                },
+                { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
+                { model: User, as: 'updater', attributes: ['id', 'name', 'email'] }
             ]
         });
 
@@ -135,7 +142,9 @@ class ProductService {
                 stock_quantity: data.stock_quantity || 0,
                 category_id: data.category_id,
                 brand_id: data.brand_id,
-                is_active: data.is_active ?? true
+                is_active: data.is_active ?? true,
+                created_by: data.created_by || null,
+                updated_by: data.updated_by || null
             };
 
             const product = await Product.create(baseProductData, { transaction: t });
@@ -232,7 +241,9 @@ class ProductService {
                     { model: Brand, as: 'brand' },
                     { model: ProductVariant, as: 'variants' },
                     { model: ProductDetail, as: 'detail' },
-                    { model: ProductImage, as: 'images' }
+                    { model: ProductImage, as: 'images' },
+                    { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
+                    { model: User, as: 'updater', attributes: ['id', 'name', 'email'] }
                 ]
             });
         } catch (error) {
@@ -277,7 +288,7 @@ class ProductService {
                 }
             }
             await t.commit();
-            return product;
+            return await this.findOne(id);
         } catch (err) {
             await t.rollback();
             throw err;

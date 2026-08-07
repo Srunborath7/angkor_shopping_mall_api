@@ -50,6 +50,7 @@ class ProductController {
                 is_active: req.body.is_active ?? true,
                 image_url: image?.url || req.body.image_url,
                 image_path: image?.path || req.body.image_path,
+                created_by: req.user?.id,
                 detail,
                 variants,
                 images
@@ -133,7 +134,8 @@ class ProductController {
                 stock_quantity: req.body.stock_quantity ?? product.stock_quantity,
                 category_id: req.body.category_id ?? product.category_id,
                 brand_id: req.body.brand_id ?? product.brand_id,
-                is_active: req.body.is_active ?? product.is_active
+                is_active: req.body.is_active ?? product.is_active,
+                updated_by: req.user?.id
             };
 
             // Update basic product fields first

@@ -1,40 +1,36 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/db');
 
-const Product = sequelize.define('Product', {
+const PurchaseOrder = sequelize.define('PurchaseOrder', {
     id: {
         type: DataTypes.UUID,
         defaultValue: DataTypes.UUIDV4,
         primaryKey: true,
     },
-    name: {
+    po_number: {
         type: DataTypes.STRING,
         allowNull: false,
+        unique: true,
     },
-    description: {
+    supplier_id: {
+        type: DataTypes.UUID,
+        allowNull: false,
+    },
+    order_date: {
+        type: DataTypes.DATE,
+        defaultValue: DataTypes.NOW,
+    },
+    status: {
+        type: DataTypes.ENUM('pending', 'received', 'cancelled'),
+        defaultValue: 'pending',
+    },
+    total_amount: {
+        type: DataTypes.DECIMAL(10, 2),
+        defaultValue: 0.00,
+    },
+    notes: {
         type: DataTypes.TEXT,
         allowNull: true,
-    },
-    price: {
-        type: DataTypes.DECIMAL(10, 2),
-        allowNull: false,
-    },
-    stock_quantity: {
-        type: DataTypes.INTEGER,
-        allowNull: false,
-        defaultValue: 0,
-    },
-    category_id: {
-        type: DataTypes.UUID,
-        allowNull: true,
-    },
-    brand_id: {
-        type: DataTypes.UUID,
-        allowNull: true,
-    },
-    is_active: {
-        type: DataTypes.BOOLEAN,
-        defaultValue: true,
     },
     created_by: {
         type: DataTypes.UUID,
@@ -45,10 +41,10 @@ const Product = sequelize.define('Product', {
         allowNull: true,
     }
 }, {
-    tableName: 'products',
+    tableName: 'purchase_orders',
     timestamps: true,
     createdAt: 'created_at',
     updatedAt: 'updated_at',
 });
 
-module.exports = Product;
+module.exports = PurchaseOrder;
