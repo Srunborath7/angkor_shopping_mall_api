@@ -71,7 +71,7 @@ async function testServices() {
 
         const primaryImg = updatedGallery.find(img => img.is_primary);
         if (primaryImg.image_url !== 'https://example.com/updated-main-iphone.jpg') {
-            throw new Error(`Primary image url in gallery was not updated. Found: ${primaryImg.image_url}`);
+            throw new Error(`Primary image url in gallery was not updated. Found 1: ${primaryImg.image_url}`);
         }
 
         console.log("\n7. Cleaning up created mock records...");
