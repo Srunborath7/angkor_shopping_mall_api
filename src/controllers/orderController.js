@@ -108,6 +108,11 @@ class OrderController {
                         model: OrderItem,
                         as: 'items',
                         include: [{ model: Product, as: 'product' }]
+                    },
+                    {
+                        model: User,
+                        as: 'user',
+                        attributes: ['id', 'name', 'email', 'phone']
                     }
                 ]
             });
@@ -116,12 +121,168 @@ class OrderController {
                 return errorResponse(res, 'Order not found', 404);
             }
 
-            // Simple security check: Ensure users only access their own orders (unless admin/system)
-            if (req.user && order.user_id !== req.user.id) {
-                return errorResponse(res, 'Unauthorized to view this order', 403);
+            return successResponse(res, 'Order retrieved successfully', order);
+        } catch (error) {
+            return errorResponse(res, error.message);
+        }
+    }
+
+    async getAdminOrders(req, res) {
+        try {
+            const orders = await Order.findAll({
+                include: [
+                    {
+                        model: OrderItem,
+                        as: 'items',
+                        include: [{ model: Product, as: 'product' }]
+                    },
+                    {
+                        model: User,
+                        as: 'user',
+                        attributes: ['id', 'name', 'email', 'phone']
+                    }
+                ],
+                order: [['created_at', 'DESC']]
+            });
+
+            return successResponse(res, 'Admin orders retrieved successfully', orders);
+        } catch (error) {
+            return errorResponse(res, error.message);
+        }
+    }
+
+    async updateOrderStatus(req, res) {
+        try {
+            const { id } = req.params;
+            const { status, shipping_address, contact_phone } = req.body;
+
+            const order = await Order.findByPk(id, {
+                include: [
+                    {
+                        model: OrderItem,
+                        as: 'items',
+                        include: [{ model: Product, as: 'product' }]
+                    },
+                    {
+                        model: User,
+                        as: 'user',
+                        attributes: ['id', 'name', 'email', 'phone', 'telegram_chat_id']
+                    }
+                ]
+            });
+
+            if (!order) {
+                return errorResponse(res, 'Order not found', 404);
             }
 
-            return successResponse(res, 'Order retrieved successfully', order);
+            if (status) {
+                const validStatuses = ['pending', 'paid', 'failed', 'shipped', 'completed', 'cancelled'];
+                if (!validStatuses.includes(status)) {
+                    return errorResponse(res, `Invalid status. Must be one of: ${validStatuses.join(', ')}`, 400);
+                }
+
+                // Restock items if order status transitions to cancelled from active
+                if (status === 'cancelled' && order.status !== 'cancelled') {
+                    for (const item of order.items) {
+                        await Product.increment('stock_quantity', {
+                            by: item.quantity,
+                            where: { id: item.product_id }
+                        });
+                    }
+                }
+
+                order.status = status;
+            }
+
+            if (shipping_address) order.shipping_address = shipping_address;
+            if (contact_phone) order.contact_phone = contact_phone;
+
+            await order.save();
+
+            // Send notification via Telegram if user connected
+            if (order.user && order.user.telegram_chat_id && status) {
+                try {
+                    const text = `🛍️ *Angkor Shopping Mall - Order Update!*
+
+━━━━━━━━━━━━━━
+🆔 *Order ID:* \`${order.id}\`
+📦 *New Status:* *${status.toUpperCase()}*
+💰 *Total Amount:* $${order.total_amount}
+━━━━━━━━━━━━━━
+
+Thank you for shopping with us!`;
+                    await bot.sendMessage(order.user.telegram_chat_id, text, { parse_mode: 'Markdown' });
+                } catch (tgErr) {
+                    console.error("Failed to send telegram notification:", tgErr.message);
+                }
+            }
+
+            return successResponse(res, 'Order status updated successfully', order);
+        } catch (error) {
+            return errorResponse(res, error.message);
+        }
+    }
+
+    async deleteOrder(req, res) {
+        try {
+            const { id } = req.params;
+            const order = await Order.findByPk(id);
+            if (!order) {
+                return errorResponse(res, 'Order not found', 404);
+            }
+            await order.destroy();
+            return successResponse(res, 'Order deleted successfully');
+        } catch (error) {
+            return errorResponse(res, error.message);
+        }
+    }
+
+    async createAdminOrder(req, res) {
+        try {
+            const { user_id, shipping_address, contact_phone, items, status = 'pending' } = req.body;
+            if (!user_id || !shipping_address || !contact_phone || !items || !items.length) {
+                return errorResponse(res, 'Missing required fields: user_id, shipping_address, contact_phone, items', 400);
+            }
+
+            let totalAmount = 0;
+            for (const item of items) {
+                const product = await Product.findByPk(item.product_id);
+                if (!product) {
+                    return errorResponse(res, `Product not found ID: ${item.product_id}`, 404);
+                }
+                totalAmount += parseFloat(product.price) * item.quantity;
+            }
+
+            const order = await Order.create({
+                user_id,
+                total_amount: totalAmount,
+                status,
+                shipping_address,
+                contact_phone
+            });
+
+            for (const item of items) {
+                const product = await Product.findByPk(item.product_id);
+                await OrderItem.create({
+                    order_id: order.id,
+                    product_id: item.product_id,
+                    quantity: item.quantity,
+                    price: product.price
+                });
+                await Product.decrement('stock_quantity', {
+                    by: item.quantity,
+                    where: { id: item.product_id }
+                });
+            }
+
+            const updatedOrder = await Order.findByPk(order.id, {
+                include: [
+                    { model: OrderItem, as: 'items', include: [{ model: Product, as: 'product' }] },
+                    { model: User, as: 'user', attributes: ['id', 'name', 'email', 'phone'] }
+                ]
+            });
+
+            return successResponse(res, 'Order created successfully', updatedOrder);
         } catch (error) {
             return errorResponse(res, error.message);
         }
