@@ -1,7 +1,7 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/db');
 
-const Role = sequelize.define('Category',{
+const Category = sequelize.define('Category',{
     id: {
       type: DataTypes.UUID,
       defaultValue: DataTypes.UUIDV4,
@@ -15,6 +15,11 @@ const Role = sequelize.define('Category',{
     note: {
         type: DataTypes.STRING,
         allowNull: true,
+    },
+    icon: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        defaultValue: '📱',
     },
     created_by: {
         type: DataTypes.UUID,
@@ -33,4 +38,4 @@ const Role = sequelize.define('Category',{
   }
 );
 
-module.exports = Role;
+module.exports = Category;

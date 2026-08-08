@@ -36,6 +36,7 @@ class CategoryController {
                     'id',
                     'name',
                     'note',
+                    'icon',
                     'created_by',
                     'updated_by',
                     'created_at',
