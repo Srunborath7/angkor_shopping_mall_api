@@ -15,6 +15,7 @@ const ProductReview = require('./productReviewModel');
 const Supplier = require('./supplierModel');
 const PurchaseOrder = require('./purchaseOrderModel');
 const PurchaseOrderItem = require('./purchaseOrderItemModel');
+const FlashSale = require('./flashSaleModel');
 
 // User & Role Associations
 User.belongsToMany(Role, {
@@ -113,6 +114,10 @@ PurchaseOrderItem.belongsTo(Product, { foreignKey: 'product_id', as: 'product' }
 ProductVariant.hasMany(PurchaseOrderItem, { foreignKey: 'product_variant_id', as: 'purchaseItems' });
 PurchaseOrderItem.belongsTo(ProductVariant, { foreignKey: 'product_variant_id', as: 'variant' });
 
+// Flash Sale → Product association
+FlashSale.belongsTo(Product, { foreignKey: 'product_id', as: 'product' });
+Product.hasMany(FlashSale, { foreignKey: 'product_id', as: 'flashSales' });
+
 module.exports = {
     User,
     Role,
@@ -130,5 +135,6 @@ module.exports = {
     ProductReview,
     Supplier,
     PurchaseOrder,
-    PurchaseOrderItem
+    PurchaseOrderItem,
+    FlashSale
 };
