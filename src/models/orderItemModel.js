@@ -15,6 +15,11 @@ const OrderItem = sequelize.define('OrderItem', {
         type: DataTypes.UUID,
         allowNull: false,
     },
+    variant_id: {
+        type: DataTypes.UUID,
+        allowNull: true,
+        comment: 'FK to product_variants — the specific variant ordered',
+    },
     quantity: {
         type: DataTypes.INTEGER,
         allowNull: false,
@@ -22,7 +27,13 @@ const OrderItem = sequelize.define('OrderItem', {
     price: {
         type: DataTypes.DECIMAL(10, 2),
         allowNull: false,
-    }
+    },
+    attributes: {
+        type: DataTypes.JSON,
+        allowNull: false,
+        defaultValue: {},
+        comment: 'Snapshot of the variant attributes at time of order (e.g. {color:"Red", size:"L"})',
+    },
 }, {
     tableName: 'order_items',
     timestamps: true,
