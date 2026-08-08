@@ -36,6 +36,7 @@ const productImageRoutes = require("./routes/productImageRoute");
 const productReviewRoutes = require("./routes/productReviewRoute");
 const supplierRoutes = require("./routes/supplierRoute");
 const purchaseOrderRoutes = require("./routes/purchaseOrderRoute");
+const flashSaleRoutes = require("./routes/flashSaleRoute");
 
 app.get("/", (req, res) => {
   res.status(200).json({
@@ -54,6 +55,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/categories", categoryRoutes);
 app.use("/api/brands", brandRoutes);
 app.use("/api/products", productRoutes);
+app.use("/api/flash-sales", flashSaleRoutes);
 app.use("/api/cart", cartRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/recommendations", recommendationRoutes);
