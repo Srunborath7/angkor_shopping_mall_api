@@ -6,11 +6,6 @@ const app = express();
 
 require("./models/relationships");
 
-
-// ========================================
-// CORS
-// ========================================
-
 app.use(
     cors({
         origin: [
@@ -34,18 +29,8 @@ app.use(
     })
 );
 
-
-// ========================================
-// BODY PARSER
-// ========================================
-
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-
-// ========================================
-// TELEGRAM WEBHOOK
-// ========================================
 
 const {
     handleTelegramWebhook
@@ -55,11 +40,6 @@ app.post(
     "/telegram/webhook",
     handleTelegramWebhook
 );
-
-
-// ========================================
-// ROUTES
-// ========================================
 
 const roleRoutes = require("./routes/roleRoute");
 const userRoutes = require("./routes/userRoute");
