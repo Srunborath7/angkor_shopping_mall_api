@@ -1,15 +1,39 @@
 const { ProductVariant, ProductImage } = require("../models/relationships");
 
+/**
+ * Generate a unique SKU for a product variant.
+ * Format: SKU-{PRODUCTPREFIX}-{TIMESTAMP}-{RANDOM}
+ */
+async function generateUniqueSKU(productId) {
+    const prefix = String(productId).slice(0, 6).toUpperCase().replace(/-/g, '');
+    const ts = Date.now().toString(36).toUpperCase();
+    const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
+    const candidate = `SKU-${prefix}-${ts}-${rand}`;
+
+    // Ensure uniqueness — retry if collision (extremely rare)
+    const existing = await ProductVariant.findOne({ where: { sku: candidate } });
+    if (existing) {
+        return generateUniqueSKU(productId); // recurse once
+    }
+    return candidate;
+}
+
 class ProductVariantService {
     async create(productId, data) {
-        // Check if SKU exists
-        const existingVariant = await ProductVariant.findOne({ where: { sku: data.sku } });
-        if (existingVariant) {
-            throw new Error("SKU already exists");
+        // Auto-generate SKU if not provided
+        let sku = data.sku;
+        if (!sku || sku.trim() === '') {
+            sku = await generateUniqueSKU(productId);
+        } else {
+            // Check if provided SKU already exists
+            const existingVariant = await ProductVariant.findOne({ where: { sku } });
+            if (existingVariant) {
+                throw new Error("SKU already exists");
+            }
         }
 
         const variant = await ProductVariant.create({
-            sku: data.sku,
+            sku,
             price: data.price,
             stock_quantity: data.stock_quantity,
             attributes: data.attributes,

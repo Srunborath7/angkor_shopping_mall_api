@@ -1,236 +1,225 @@
-const https = require('https');
-const { Product, CartItem, Order, OrderItem, Category, Brand } = require('../models/relationships');
-const { Op } = require('sequelize');
+/**
+ * recommendationService.js
+ *
+ * Service layer for all recommendation logic.
+ * Handles ML server communication with graceful fallback to DB-level
+ * popularity when the Python ML service is unavailable.
+ */
 
-// Helper to perform POST request using native HTTPS
-const makePostRequest = (url, data) => {
-    return new Promise((resolve, reject) => {
-        const urlObj = new URL(url);
-        const postData = JSON.stringify(data);
+const axios = require('axios');
+const { Op, fn, col, literal } = require('sequelize');
+const { Product, ProductImage, Category, Brand, UserProductInteraction } = require('../models/relationships');
 
-        const options = {
-            hostname: urlObj.hostname,
-            path: urlObj.pathname + urlObj.search,
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(postData)
-            }
-        };
+const ML_BASE_URL = process.env.ML_SERVICE_URL || 'http://127.0.0.1:8001';
+const ML_TIMEOUT_MS = 8000;
 
-        const req = https.request(options, (res) => {
-            let body = '';
-            res.on('data', (chunk) => body += chunk);
-            res.on('end', () => {
-                if (res.statusCode >= 200 && res.statusCode < 300) {
-                    resolve(body);
-                } else {
-                    reject(new Error(`Status: ${res.statusCode}, Body: ${body}`));
-                }
-            });
-        });
+// ─────────────────────────────────────────────
+// ML Server helpers
+// ─────────────────────────────────────────────
 
-        req.on('error', (e) => reject(e));
-        req.write(postData);
-        req.end();
+async function callML(endpoint, body) {
+    const response = await axios.post(`${ML_BASE_URL}${endpoint}`, body, {
+        timeout: ML_TIMEOUT_MS,
     });
-};
+    return response.data;
+}
 
-const getRecommendations = async (userId) => {
+async function isMLHealthy() {
     try {
-        // 1. Fetch User's Cart Items
-        const cartItems = await CartItem.findAll({
-            where: { user_id: userId },
-            include: [{ model: Product, as: 'product' }]
-        });
-
-        // 2. Fetch User's Purchase History
-        const purchaseHistory = await Order.findAll({
-            where: { user_id: userId },
-            include: [
-                {
-                    model: OrderItem,
-                    as: 'items',
-                    include: [{ model: Product, as: 'product' }]
-                }
-            ]
-        });
-
-        // 3. Fetch All Available Products
-        const availableProducts = await Product.findAll({
-            where: { is_active: true },
-            include: [
-                { model: Category, as: 'category' },
-                { model: Brand, as: 'brand' }
-            ]
-        });
-
-        const geminiKey = process.env.GEMINI_API_KEY;
-
-        if (geminiKey) {
-            // Setup Prompt for AI
-            const simplifiedCart = cartItems.map(c => ({
-                id: c.product_id,
-                name: c.product?.name,
-                category: c.product?.category_id
-            }));
-
-            const simplifiedHistory = purchaseHistory.map(o => ({
-                orderId: o.id,
-                items: o.items.map(i => ({
-                    id: i.product_id,
-                    name: i.product?.name,
-                    category: i.product?.category_id
-                }))
-            }));
-
-            const simplifiedProducts = availableProducts.map(p => ({
-                id: p.id,
-                name: p.name,
-                description: p.description,
-                price: p.price,
-                category: p.category?.name,
-                brand: p.brand?.name
-            }));
-
-            const prompt = `You are a personalized AI product recommender for "Angkor Shopping Mall".
-Based on the user's cart items and purchase history, recommend up to 3 products from the available products list below that they might like.
-Return the result strictly as a valid JSON array of objects, containing ONLY the fields "id" (the product UUID) and "reason" (a friendly, customer-centric 1-2 sentence explanation of why this product fits their taste).
-Do not add any markdown, comments, formatting, or extra text. Return only the JSON content.
-
-User's Cart:
-${JSON.stringify(simplifiedCart, null, 2)}
-
-User's Purchase History:
-${JSON.stringify(simplifiedHistory, null, 2)}
-
-Available Products:
-${JSON.stringify(simplifiedProducts, null, 2)}`;
-
-            const requestBody = {
-                contents: [{
-                    parts: [{
-                        text: prompt
-                    }]
-                }]
-            };
-
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`;
-            
-            const responseText = await makePostRequest(url, requestBody);
-            const responseData = JSON.parse(responseText);
-
-            if (responseData.candidates && responseData.candidates[0]?.content?.parts[0]?.text) {
-                let aiText = responseData.candidates[0].content.parts[0].text;
-                // Strip markdown styling if any
-                aiText = aiText.replace(/```json/gi, '').replace(/```/g, '').trim();
-                const recommendations = JSON.parse(aiText);
-
-                // Join with database product models
-                const finalRecommendations = [];
-                for (const rec of recommendations) {
-                    const product = availableProducts.find(p => p.id === rec.id);
-                    if (product) {
-                        finalRecommendations.push({
-                            product,
-                            reason: rec.reason
-                        });
-                    }
-                }
-
-                if (finalRecommendations.length > 0) {
-                    return finalRecommendations;
-                }
-            }
-        }
-
-        // 4. Fallback to Local Recommendation logic if Gemini is not set up or fails
-        return await getFallbackRecommendations(userId, cartItems, purchaseHistory);
-
-    } catch (error) {
-        console.error("AI Recommendation error:", error);
-        // Fallback in case of general exception
-        try {
-            const cartItems = await CartItem.findAll({
-                where: { user_id: userId },
-                include: [{ model: Product, as: 'product' }]
-            });
-            const purchaseHistory = await Order.findAll({
-                where: { user_id: userId },
-                include: [{ model: OrderItem, as: 'items', include: [{ model: Product, as: 'product' }] }]
-            });
-            return await getFallbackRecommendations(userId, cartItems, purchaseHistory);
-        } catch (fallbackError) {
-            console.error("Fallback recommendation error:", fallbackError);
-            return [];
-        }
+        const res = await axios.get(`${ML_BASE_URL}/health`, { timeout: 3000 });
+        return res.data?.status === 'ok';
+    } catch {
+        return false;
     }
-};
+}
 
-const getFallbackRecommendations = async (userId, cartItems, purchaseHistory) => {
-    const historyCategories = new Set();
-    const historyBrands = new Set();
-    const excludedProductIds = new Set();
+// ─────────────────────────────────────────────
+// Product enrichment helper
+// ─────────────────────────────────────────────
 
-    cartItems.forEach(item => {
-        excludedProductIds.add(item.product_id);
-        if (item.product) {
-            if (item.product.category_id) historyCategories.add(item.product.category_id);
-            if (item.product.brand_id) historyBrands.add(item.product.brand_id);
-        }
-    });
+const PRODUCT_INCLUDE = [
+    { model: Category,     as: 'category', attributes: ['id', 'name'] },
+    { model: Brand,        as: 'brand',    attributes: ['id', 'name'] },
+    { model: ProductImage, as: 'images',   attributes: ['id', 'image_url', 'is_primary'] },
+];
 
-    purchaseHistory.forEach(order => {
-        if (order.items) {
-            order.items.forEach(item => {
-                excludedProductIds.add(item.product_id);
-                if (item.product) {
-                    if (item.product.category_id) historyCategories.add(item.product.category_id);
-                    if (item.product.brand_id) historyBrands.add(item.product.brand_id);
-                }
-            });
-        }
-    });
+async function hydrateProducts(productIds) {
+    if (!productIds.length) return [];
 
     const products = await Product.findAll({
-        where: { is_active: true },
-        include: [
-            { model: Category, as: 'category' },
-            { model: Brand, as: 'brand' }
-        ]
+        where: { id: productIds, is_active: true },
+        include: PRODUCT_INCLUDE,
     });
 
-    const scoredProducts = products
-        .filter(prod => !excludedProductIds.has(prod.id))
-        .map(prod => {
-            let score = 0;
-            if (historyCategories.has(prod.category_id)) score += 2;
-            if (historyBrands.has(prod.brand_id)) score += 1;
-            return { product: prod, score };
-        });
+    // Preserve caller-supplied order
+    const map = new Map(products.map((p) => [p.id, p]));
+    return productIds.map((id) => map.get(id)).filter(Boolean);
+}
 
-    scoredProducts.sort((a, b) => b.score - a.score);
-    const topScored = scoredProducts.slice(0, 3);
+// ─────────────────────────────────────────────
+// 1. Personalised ML recommendations
+// ─────────────────────────────────────────────
 
-    return topScored.map(item => {
-        let reason = "A popular choice in Angkor Shopping Mall that you might like!";
-        if (item.score > 0) {
-            const reasons = [];
-            if (historyCategories.has(item.product.category_id) && item.product.category) {
-                reasons.push(`category "${item.product.category.name}"`);
-            }
-            if (historyBrands.has(item.product.brand_id) && item.product.brand) {
-                reasons.push(`brand "${item.product.brand.name}"`);
-            }
-            reason = `Recommended based on your recent interest in ${reasons.join(' and ')}.`;
+/**
+ * Fetch ML-ranked recommendations for a user.
+ * Returns { products, source } where source is 'ml' or 'popular'.
+ */
+async function getMLRecommendations(userId, limit = 10) {
+    try {
+        const data = await callML('/recommend', { user_id: String(userId), count: limit });
+
+        if (data.unknown_user || !data.recommendations?.length) {
+            // User has no training history — fall back to popular
+            return { products: [], source: 'unknown_user' };
         }
-        return {
-            product: item.product,
-            reason: reason
-        };
+
+        const productIds = data.recommendations.map((r) => r.product_id);
+        const products   = await hydrateProducts(productIds);
+
+        return { products, source: 'ml', scores: data.recommendations };
+    } catch (err) {
+        console.warn('[RecommendationService] ML server unavailable:', err.message);
+        return { products: [], source: 'error' };
+    }
+}
+
+// ─────────────────────────────────────────────
+// 2. Popular products (DB fallback, no ML needed)
+// ─────────────────────────────────────────────
+
+/**
+ * Returns products ranked by total interaction weight in the DB.
+ * Works even when the ML service is offline.
+ */
+async function getPopularProducts(limit = 10) {
+    // Aggregate interaction weights per product
+    const topRows = await UserProductInteraction.findAll({
+        attributes: [
+            'product_id',
+            [fn('SUM', col('weight')), 'total_weight'],
+        ],
+        group:  ['product_id'],
+        order:  [[literal('total_weight'), 'DESC']],
+        limit:  limit * 2, // fetch extra in case some are inactive
+        raw:    true,
     });
-};
+
+    const productIds = topRows.map((r) => r.product_id);
+
+    if (!productIds.length) {
+        // No interaction data yet — return newest products
+        return getNewestProducts(limit);
+    }
+
+    const products = await hydrateProducts(productIds);
+    return products.slice(0, limit);
+}
+
+/**
+ * Fallback when no interaction data exists — newest active products.
+ */
+async function getNewestProducts(limit = 10) {
+    return Product.findAll({
+        where:   { is_active: true },
+        include: PRODUCT_INCLUDE,
+        order:   [['created_at', 'DESC']],
+        limit,
+    });
+}
+
+// ─────────────────────────────────────────────
+// 3. Similar products (ML embedding cosine similarity)
+// ─────────────────────────────────────────────
+
+/**
+ * Products similar to a given product via the ML embedding space.
+ * Falls back to same-category products when ML is unavailable.
+ */
+async function getSimilarProducts(productId, limit = 8) {
+    try {
+        const data = await callML('/similar', { product_id: String(productId), count: limit });
+
+        if (!data.similar?.length) {
+            return getSameCategoryProducts(productId, limit);
+        }
+
+        const productIds = data.similar.map((r) => r.product_id);
+        const products   = await hydrateProducts(productIds);
+        return products;
+    } catch (err) {
+        console.warn('[RecommendationService] Similar-products ML call failed:', err.message);
+        return getSameCategoryProducts(productId, limit);
+    }
+}
+
+/**
+ * DB fallback: products in the same category, excluding the queried product.
+ */
+async function getSameCategoryProducts(productId, limit = 8) {
+    const source = await Product.findByPk(productId, { attributes: ['id', 'category_id'] });
+    if (!source) return [];
+
+    return Product.findAll({
+        where: {
+            is_active:   true,
+            category_id: source.category_id,
+            id:          { [Op.ne]: productId },
+        },
+        include: PRODUCT_INCLUDE,
+        order:   [['created_at', 'DESC']],
+        limit,
+    });
+}
+
+// ─────────────────────────────────────────────
+// 4. Search-based suggestions
+// ─────────────────────────────────────────────
+
+/**
+ * Products matching a keyword, optionally boosted by popularity within that category.
+ */
+async function getSearchSuggestions(query, limit = 10) {
+    if (!query?.trim()) return [];
+
+    const products = await Product.findAll({
+        where: {
+            is_active: true,
+            [Op.or]: [
+                { name:        { [Op.iLike]: `%${query}%` } },
+                { description: { [Op.iLike]: `%${query}%` } },
+            ],
+        },
+        include: PRODUCT_INCLUDE,
+        order:   [['created_at', 'DESC']],
+        limit:   limit * 2,
+    });
+
+    // Boost ordering by interaction weight for returned products
+    if (!products.length) return [];
+
+    const ids = products.map((p) => p.id);
+    const weightRows = await UserProductInteraction.findAll({
+        attributes: ['product_id', [fn('SUM', col('weight')), 'total_weight']],
+        where:  { product_id: ids },
+        group:  ['product_id'],
+        raw:    true,
+    });
+
+    const weightMap = new Map(weightRows.map((r) => [r.product_id, Number(r.total_weight)]));
+
+    const sorted = products
+        .map((p) => ({ product: p, weight: weightMap.get(p.id) || 0 }))
+        .sort((a, b) => b.weight - a.weight)
+        .map((x) => x.product)
+        .slice(0, limit);
+
+    return sorted;
+}
 
 module.exports = {
-    getRecommendations
+    getMLRecommendations,
+    getPopularProducts,
+    getSimilarProducts,
+    getSearchSuggestions,
+    isMLHealthy,
 };

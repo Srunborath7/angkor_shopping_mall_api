@@ -1,4 +1,4 @@
-const { CartItem, Product, Category, Brand } = require('../models/relationships');
+const { CartItem, Product, ProductVariant, Category, Brand } = require('../models/relationships');
 const { successResponse, errorResponse } = require('../utils/response');
 
 class CartController {
@@ -15,21 +15,32 @@ class CartController {
                             { model: Category, as: 'category' },
                             { model: Brand, as: 'brand' }
                         ]
+                    },
+                    {
+                        model: ProductVariant,
+                        as: 'variant',
+                        required: false
                     }
                 ],
                 order: [['created_at', 'ASC']]
             });
 
-            // Calculate totals
+            // Calculate totals — use variant price if available
             let subtotal = 0;
             const formattedItems = items.map(item => {
-                const itemTotal = parseFloat(item.product?.price || 0) * item.quantity;
+                const effectivePrice = item.variant?.price
+                    ? parseFloat(item.variant.price)
+                    : parseFloat(item.product?.price || 0);
+                const itemTotal = effectivePrice * item.quantity;
                 subtotal += itemTotal;
                 return {
                     id: item.id,
                     product_id: item.product_id,
+                    variant_id: item.variant_id,
                     quantity: item.quantity,
+                    attributes: item.attributes || {},
                     product: item.product,
+                    variant: item.variant,
                     total_price: itemTotal.toFixed(2)
                 };
             });
@@ -46,7 +57,7 @@ class CartController {
     async addToCart(req, res) {
         try {
             const userId = req.user.id;
-            const { product_id, quantity = 1 } = req.body;
+            const { product_id, variant_id = null, quantity = 1, attributes = {} } = req.body;
 
             if (!product_id) {
                 return errorResponse(res, 'Product ID is required', 400);
@@ -57,19 +68,37 @@ class CartController {
                 return errorResponse(res, 'Product not found', 404);
             }
 
-            // Check if product is already in user's cart
+            // If variant_id provided, validate it exists
+            if (variant_id) {
+                const variant = await ProductVariant.findByPk(variant_id);
+                if (!variant) {
+                    return errorResponse(res, 'Product variant not found', 404);
+                }
+            }
+
+            // Check if same product+variant is already in user's cart
             let cartItem = await CartItem.findOne({
-                where: { user_id: userId, product_id: product_id }
+                where: {
+                    user_id: userId,
+                    product_id,
+                    variant_id: variant_id || null
+                }
             });
 
             if (cartItem) {
                 cartItem.quantity += parseInt(quantity);
+                // Update attributes snapshot if changed
+                if (attributes && Object.keys(attributes).length > 0) {
+                    cartItem.attributes = attributes;
+                }
                 await cartItem.save();
             } else {
                 cartItem = await CartItem.create({
                     user_id: userId,
                     product_id,
-                    quantity: parseInt(quantity)
+                    variant_id: variant_id || null,
+                    quantity: parseInt(quantity),
+                    attributes: attributes || {}
                 });
             }
 

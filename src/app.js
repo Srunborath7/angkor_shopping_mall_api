@@ -1,25 +1,65 @@
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
-const app = express();
-const router = express.Router();
-require("./models/relationships");
-const {handleTelegramWebhook} = require("./config/telegram");
-router.post("/telegram/webhook", handleTelegramWebhook);
 
-app.use(cors({
-    origin: [
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "https://angkorshoppingmall.netlify.app"
-    ],
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true,
-}));
+const app = express();
+
+require("./models/relationships");
+
+
+// ========================================
+// CORS
+// ========================================
+
+app.use(
+    cors({
+        origin: [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "https://angkorshoppingmall.netlify.app"
+        ],
+        methods: [
+            "GET",
+            "POST",
+            "PUT",
+            "DELETE",
+            "PATCH",
+            "OPTIONS"
+        ],
+        allowedHeaders: [
+            "Content-Type",
+            "Authorization"
+        ],
+        credentials: true
+    })
+);
+
+
+// ========================================
+// BODY PARSER
+// ========================================
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+
+// ========================================
+// TELEGRAM WEBHOOK
+// ========================================
+
+const {
+    handleTelegramWebhook
+} = require("./config/telegram");
+
+app.post(
+    "/telegram/webhook",
+    handleTelegramWebhook
+);
+
+
+// ========================================
+// ROUTES
+// ========================================
 
 const roleRoutes = require("./routes/roleRoute");
 const userRoutes = require("./routes/userRoute");
@@ -38,16 +78,37 @@ const supplierRoutes = require("./routes/supplierRoute");
 const purchaseOrderRoutes = require("./routes/purchaseOrderRoute");
 const flashSaleRoutes = require("./routes/flashSaleRoute");
 
+
+// ========================================
+// ROOT
+// ========================================
+
 app.get("/", (req, res) => {
-  res.status(200).json({
-    success: true,
-    message: "Server is running successfully",
-  });
+    res.status(200).json({
+        success: true,
+        message: "Server is running successfully"
+    });
 });
 
+
+// ========================================
+// PAYMENT
+// ========================================
+
 app.get("/pay/:orderId", (req, res) => {
-  res.sendFile(path.join(__dirname, "views", "checkout.html"));
+    res.sendFile(
+        path.join(
+            __dirname,
+            "views",
+            "checkout.html"
+        )
+    );
 });
+
+
+// ========================================
+// API
+// ========================================
 
 app.use("/api/roles", roleRoutes);
 app.use("/api/users", userRoutes);
@@ -61,25 +122,37 @@ app.use("/api/orders", orderRoutes);
 app.use("/api/recommendations", recommendationRoutes);
 app.use("/api/suppliers", supplierRoutes);
 app.use("/api/purchase-orders", purchaseOrderRoutes);
+
 app.use("/api", productVariantRoutes);
 app.use("/api", productDetailRoutes);
 app.use("/api", productImageRoutes);
 app.use("/api", productReviewRoutes);
 
+
+// ========================================
+// 404
+// ========================================
+
 app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    message: "Route not found",
-  });
+    res.status(404).json({
+        success: false,
+        message: "Route not found"
+    });
 });
+
+
+// ========================================
+// ERROR
+// ========================================
 
 app.use((err, req, res, next) => {
-  console.error(err);
+    console.error(err);
 
-  res.status(err.status || 500).json({
-    success: false,
-    message: err.message || "Internal Server Error",
-  });
+    res.status(err.status || 500).json({
+        success: false,
+        message: err.message || "Internal Server Error"
+    });
 });
+
 
 module.exports = app;

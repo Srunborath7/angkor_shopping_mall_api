@@ -1,7 +1,23 @@
-const { Order, OrderItem, CartItem, Product, User, Category, Brand } = require('../models/relationships');
+const { Order, OrderItem, CartItem, Product, ProductVariant, User, Category, Brand } = require('../models/relationships');
 const { successResponse, errorResponse } = require('../utils/response');
 const paymentService = require('../services/paymentService');
 const { bot } = require('../config/telegram');
+const { trackInteractionBulk } = require('../utils/trackInteraction');
+
+// Helper to build the standard OrderItem includes (product + variant)
+const orderItemIncludes = () => [
+    {
+        model: Product,
+        as: 'product',
+        attributes: ['id', 'name', 'price', 'image_url', 'stock_quantity'],
+    },
+    {
+        model: ProductVariant,
+        as: 'variant',
+        required: false,
+        attributes: ['id', 'sku', 'price', 'stock_quantity', 'attributes']
+    }
+];
 
 class OrderController {
     async checkout(req, res) {
@@ -13,10 +29,13 @@ class OrderController {
                 return errorResponse(res, 'Shipping address and contact phone are required', 400);
             }
 
-            // 1. Fetch Cart Items
+            // 1. Fetch Cart Items (include variant so we can snapshot attributes + price)
             const cartItems = await CartItem.findAll({
                 where: { user_id: userId },
-                include: [{ model: Product, as: 'product' }]
+                include: [
+                    { model: Product, as: 'product' },
+                    { model: ProductVariant, as: 'variant', required: false }
+                ]
             });
 
             if (cartItems.length === 0) {
@@ -29,13 +48,24 @@ class OrderController {
                 if (!item.product) {
                     return errorResponse(res, 'Product in cart no longer exists', 404);
                 }
-                if (item.product.stock_quantity < item.quantity) {
-                    return errorResponse(res, `Insufficient stock for product: ${item.product.name}. Available: ${item.product.stock_quantity}`, 400);
+
+                const effectiveStock = item.variant
+                    ? item.variant.stock_quantity
+                    : item.product.stock_quantity;
+
+                if (effectiveStock < item.quantity) {
+                    return errorResponse(res, `Insufficient stock for product: ${item.product.name}. Available: ${effectiveStock}`, 400);
                 }
-                totalAmount += parseFloat(item.product.price) * item.quantity;
+
+                // Use variant price if available, otherwise product price
+                const effectivePrice = item.variant?.price
+                    ? parseFloat(item.variant.price)
+                    : parseFloat(item.product.price);
+
+                totalAmount += effectivePrice * item.quantity;
             }
 
-            // 3. Create Order in transaction/sequence
+            // 3. Create Order
             const order = await Order.create({
                 user_id: userId,
                 total_amount: totalAmount,
@@ -44,20 +74,37 @@ class OrderController {
                 contact_phone
             });
 
-            // 4. Create Order Items and decrease product stock
+            // 4. Create Order Items with variant_id + attributes snapshot, decrease stock
             for (const item of cartItems) {
+                const effectivePrice = item.variant?.price
+                    ? parseFloat(item.variant.price)
+                    : parseFloat(item.product.price);
+
+                const attributesSnapshot = item.attributes && Object.keys(item.attributes).length > 0
+                    ? item.attributes
+                    : (item.variant?.attributes || {});
+
                 await OrderItem.create({
                     order_id: order.id,
                     product_id: item.product_id,
+                    variant_id: item.variant_id || null,
                     quantity: item.quantity,
-                    price: item.product.price // save historical price
+                    price: effectivePrice,
+                    attributes: attributesSnapshot
                 });
 
-                // Deduct stock
-                await Product.decrement('stock_quantity', {
-                    by: item.quantity,
-                    where: { id: item.product_id }
-                });
+                // Deduct stock from variant if applicable, otherwise from product
+                if (item.variant_id) {
+                    await ProductVariant.decrement('stock_quantity', {
+                        by: item.quantity,
+                        where: { id: item.variant_id }
+                    });
+                } else {
+                    await Product.decrement('stock_quantity', {
+                        by: item.quantity,
+                        where: { id: item.product_id }
+                    });
+                }
             }
 
             // 5. Clear Cart
@@ -65,7 +112,11 @@ class OrderController {
                 where: { user_id: userId }
             });
 
-            // 6. Generate Payment Session
+            // 6. Track order interactions for ML (fire-and-forget)
+            const orderedProductIds = cartItems.map((item) => item.product_id).filter(Boolean);
+            trackInteractionBulk(userId, orderedProductIds, 'order');
+
+            // 7. Generate Payment Session
             const paymentDetails = await paymentService.createCheckoutSession(order, req);
 
             return successResponse(res, 'Order placed successfully. Please proceed to payment.', {
@@ -86,7 +137,7 @@ class OrderController {
                     {
                         model: OrderItem,
                         as: 'items',
-                        include: [{ model: Product, as: 'product' }]
+                        include: orderItemIncludes()
                     }
                 ],
                 order: [['created_at', 'DESC']]
@@ -107,7 +158,7 @@ class OrderController {
                     {
                         model: OrderItem,
                         as: 'items',
-                        include: [{ model: Product, as: 'product' }]
+                        include: orderItemIncludes()
                     },
                     {
                         model: User,
@@ -134,7 +185,7 @@ class OrderController {
                     {
                         model: OrderItem,
                         as: 'items',
-                        include: [{ model: Product, as: 'product' }]
+                        include: orderItemIncludes()
                     },
                     {
                         model: User,
@@ -161,7 +212,7 @@ class OrderController {
                     {
                         model: OrderItem,
                         as: 'items',
-                        include: [{ model: Product, as: 'product' }]
+                        include: orderItemIncludes()
                     },
                     {
                         model: User,
@@ -184,10 +235,17 @@ class OrderController {
                 // Restock items if order status transitions to cancelled from active
                 if (status === 'cancelled' && order.status !== 'cancelled') {
                     for (const item of order.items) {
-                        await Product.increment('stock_quantity', {
-                            by: item.quantity,
-                            where: { id: item.product_id }
-                        });
+                        if (item.variant_id) {
+                            await ProductVariant.increment('stock_quantity', {
+                                by: item.quantity,
+                                where: { id: item.variant_id }
+                            });
+                        } else {
+                            await Product.increment('stock_quantity', {
+                                by: item.quantity,
+                                where: { id: item.product_id }
+                            });
+                        }
                     }
                 }
 
@@ -202,15 +260,7 @@ class OrderController {
             // Send notification via Telegram if user connected
             if (order.user && order.user.telegram_chat_id && status) {
                 try {
-                    const text = `🛍️ *Angkor Shopping Mall - Order Update!*
-
-━━━━━━━━━━━━━━
-🆔 *Order ID:* \`${order.id}\`
-📦 *New Status:* *${status.toUpperCase()}*
-💰 *Total Amount:* $${order.total_amount}
-━━━━━━━━━━━━━━
-
-Thank you for shopping with us!`;
+                    const text = `🛍️ *Angkor Shopping Mall - Order Update!*\n\n━━━━━━━━━━━━━━\n🆔 *Order ID:* \`${order.id}\`\n📦 *New Status:* *${status.toUpperCase()}*\n💰 *Total Amount:* $${order.total_amount}\n━━━━━━━━━━━━━━\n\nThank you for shopping with us!`;
                     await bot.sendMessage(order.user.telegram_chat_id, text, { parse_mode: 'Markdown' });
                 } catch (tgErr) {
                     console.error("Failed to send telegram notification:", tgErr.message);
@@ -246,11 +296,19 @@ Thank you for shopping with us!`;
 
             let totalAmount = 0;
             for (const item of items) {
-                const product = await Product.findByPk(item.product_id);
-                if (!product) {
-                    return errorResponse(res, `Product not found ID: ${item.product_id}`, 404);
+                if (item.variant_id) {
+                    const variant = await ProductVariant.findByPk(item.variant_id);
+                    if (!variant) {
+                        return errorResponse(res, `Variant not found ID: ${item.variant_id}`, 404);
+                    }
+                    totalAmount += parseFloat(variant.price || 0) * item.quantity;
+                } else {
+                    const product = await Product.findByPk(item.product_id);
+                    if (!product) {
+                        return errorResponse(res, `Product not found ID: ${item.product_id}`, 404);
+                    }
+                    totalAmount += parseFloat(product.price) * item.quantity;
                 }
-                totalAmount += parseFloat(product.price) * item.quantity;
             }
 
             const order = await Order.create({
@@ -262,22 +320,39 @@ Thank you for shopping with us!`;
             });
 
             for (const item of items) {
-                const product = await Product.findByPk(item.product_id);
+                let effectivePrice = 0;
+                let attributesSnapshot = item.attributes || {};
+
+                if (item.variant_id) {
+                    const variant = await ProductVariant.findByPk(item.variant_id);
+                    effectivePrice = parseFloat(variant.price || 0);
+                    attributesSnapshot = item.attributes || variant.attributes || {};
+                    await ProductVariant.decrement('stock_quantity', {
+                        by: item.quantity,
+                        where: { id: item.variant_id }
+                    });
+                } else {
+                    const product = await Product.findByPk(item.product_id);
+                    effectivePrice = parseFloat(product.price);
+                    await Product.decrement('stock_quantity', {
+                        by: item.quantity,
+                        where: { id: item.product_id }
+                    });
+                }
+
                 await OrderItem.create({
                     order_id: order.id,
                     product_id: item.product_id,
+                    variant_id: item.variant_id || null,
                     quantity: item.quantity,
-                    price: product.price
-                });
-                await Product.decrement('stock_quantity', {
-                    by: item.quantity,
-                    where: { id: item.product_id }
+                    price: effectivePrice,
+                    attributes: attributesSnapshot
                 });
             }
 
             const updatedOrder = await Order.findByPk(order.id, {
                 include: [
-                    { model: OrderItem, as: 'items', include: [{ model: Product, as: 'product' }] },
+                    { model: OrderItem, as: 'items', include: orderItemIncludes() },
                     { model: User, as: 'user', attributes: ['id', 'name', 'email', 'phone'] }
                 ]
             });
@@ -313,18 +388,7 @@ Thank you for shopping with us!`;
             const user = await User.findByPk(order.user_id);
             if (user && user.telegram_chat_id) {
                 try {
-                    // Send Order Confirmation to Telegram
-                    const text = `🛍️ *Angkor Shopping Mall - Order Paid!*
-
-━━━━━━━━━━━━━━
-✅ *Order Status:* Paid
-🆔 *Order ID:* \`${order.id}\`
-💰 *Total Amount:* $${order.total_amount}
-📍 *Shipping Address:* ${order.shipping_address}
-━━━━━━━━━━━━━━
-
-Thank you for shopping with us! We will notify you once your order is shipped.`;
-
+                    const text = `🛍️ *Angkor Shopping Mall - Order Paid!*\n\n━━━━━━━━━━━━━━\n✅ *Order Status:* Paid\n🆔 *Order ID:* \`${order.id}\`\n💰 *Total Amount:* $${order.total_amount}\n📍 *Shipping Address:* ${order.shipping_address}\n━━━━━━━━━━━━━━\n\nThank you for shopping with us! We will notify you once your order is shipped.`;
                     await bot.sendMessage(user.telegram_chat_id, text, { parse_mode: 'Markdown' });
                 } catch (tgError) {
                     console.error("Failed to send payment notification telegram message:", tgError.message);
@@ -346,7 +410,7 @@ Thank you for shopping with us! We will notify you once your order is shipped.`;
                     {
                         model: OrderItem,
                         as: 'items',
-                        include: [{ model: Product, as: 'product' }]
+                        include: orderItemIncludes()
                     }
                 ]
             });
@@ -363,6 +427,8 @@ Thank you for shopping with us! We will notify you once your order is shipped.`;
                 contact_phone: order.contact_phone,
                 items: order.items.map(item => ({
                     name: item.product?.name,
+                    variant_sku: item.variant?.sku || null,
+                    attributes: item.attributes || item.variant?.attributes || {},
                     quantity: item.quantity,
                     price: item.price
                 }))

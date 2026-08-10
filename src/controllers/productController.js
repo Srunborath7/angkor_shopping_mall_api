@@ -2,6 +2,7 @@ const productService = require("../services/productService");
 const { Category, Brand, Product, ProductImage } = require("../models/relationships");
 const { uploadFile, deleteFile } = require("../utils/uploadToSupabase");
 const { successResponse, errorResponse } = require("../utils/response");
+const { trackInteraction, trackInteractionBulk } = require("../utils/trackInteraction");
 
 class ProductController {
 
@@ -75,6 +76,12 @@ class ProductController {
             const { category_id, brand_id, search } = req.query;
             const products = await productService.findAll({ category_id, brand_id, search });
 
+            // Track search interaction for authenticated users
+            if (search && req.user?.id && products.length > 0) {
+                const productIds = products.map((p) => p.id);
+                trackInteractionBulk(req.user.id, productIds, 'search');
+            }
+
             return successResponse(
                 res,
                 "Products fetched successfully",
@@ -93,6 +100,12 @@ class ProductController {
             const { category_id, brand_id, search, page = 1, limit = 10 } = req.query;
             const result = await productService.findAllPaged({ category_id, brand_id, search, page, limit });
 
+            // Track search interaction for authenticated users
+            if (search && req.user?.id && result.products?.length > 0) {
+                const productIds = result.products.map((p) => p.id);
+                trackInteractionBulk(req.user.id, productIds, 'search');
+            }
+
             return successResponse(
                 res,
                 "Products fetched successfully",
@@ -106,6 +119,12 @@ class ProductController {
     async findOne(req, res) {
         try {
             const product = await productService.findOne(req.params.id);
+
+            // Track view interaction for authenticated users (fire-and-forget)
+            if (req.user?.id) {
+                trackInteraction(req.user.id, req.params.id, 'view');
+            }
+
             return successResponse(
                 res,
                 "Product fetched successfully",

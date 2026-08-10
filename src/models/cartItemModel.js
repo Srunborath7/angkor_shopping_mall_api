@@ -15,11 +15,22 @@ const CartItem = sequelize.define('CartItem', {
         type: DataTypes.UUID,
         allowNull: false,
     },
+    variant_id: {
+        type: DataTypes.UUID,
+        allowNull: true,
+        comment: 'FK to product_variants — null if no variant selected',
+    },
     quantity: {
         type: DataTypes.INTEGER,
         allowNull: false,
         defaultValue: 1,
-    }
+    },
+    attributes: {
+        type: DataTypes.JSON,
+        allowNull: false,
+        defaultValue: {},
+        comment: 'Snapshot of selected variant attributes e.g. {color:"Red",size:"L"}',
+    },
 }, {
     tableName: 'cart_items',
     timestamps: true,

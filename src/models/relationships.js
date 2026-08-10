@@ -16,7 +16,7 @@ const Supplier = require('./supplierModel');
 const PurchaseOrder = require('./purchaseOrderModel');
 const PurchaseOrderItem = require('./purchaseOrderItemModel');
 const FlashSale = require('./flashSaleModel');
-
+const UserProductInteraction = require('./userProductInteractionModel');
 // User & Role Associations
 User.belongsToMany(Role, {
     through: UserRole,
@@ -91,6 +91,9 @@ CartItem.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 Product.hasMany(CartItem, { foreignKey: 'product_id', as: 'cartItems' });
 CartItem.belongsTo(Product, { foreignKey: 'product_id', as: 'product' });
 
+ProductVariant.hasMany(CartItem, { foreignKey: 'variant_id', as: 'cartItems' });
+CartItem.belongsTo(ProductVariant, { foreignKey: 'variant_id', as: 'variant' });
+
 // Order & OrderItem Associations
 User.hasMany(Order, { foreignKey: 'user_id', as: 'orders' });
 Order.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
@@ -100,6 +103,9 @@ OrderItem.belongsTo(Order, { foreignKey: 'order_id', as: 'order' });
 
 Product.hasMany(OrderItem, { foreignKey: 'product_id', as: 'orderItems' });
 OrderItem.belongsTo(Product, { foreignKey: 'product_id', as: 'product' });
+
+ProductVariant.hasMany(OrderItem, { foreignKey: 'variant_id', as: 'orderItems' });
+OrderItem.belongsTo(ProductVariant, { foreignKey: 'variant_id', as: 'variant' });
 
 // Supplier & Purchase Order Associations
 Supplier.hasMany(PurchaseOrder, { foreignKey: 'supplier_id', as: 'purchaseOrders' });
@@ -117,7 +123,28 @@ PurchaseOrderItem.belongsTo(ProductVariant, { foreignKey: 'product_variant_id', 
 // Flash Sale → Product association
 FlashSale.belongsTo(Product, { foreignKey: 'product_id', as: 'product' });
 Product.hasMany(FlashSale, { foreignKey: 'product_id', as: 'flashSales' });
+User.hasMany(UserProductInteraction, {
+    foreignKey: 'user_id',
+    as: 'productInteractions',
+    onDelete: 'CASCADE',
+});
 
+UserProductInteraction.belongsTo(User, {
+    foreignKey: 'user_id',
+    as: 'user',
+});
+
+
+Product.hasMany(UserProductInteraction, {
+    foreignKey: 'product_id',
+    as: 'userInteractions',
+    onDelete: 'CASCADE',
+});
+
+UserProductInteraction.belongsTo(Product, {
+    foreignKey: 'product_id',
+    as: 'product',
+});
 module.exports = {
     User,
     Role,
@@ -136,5 +163,6 @@ module.exports = {
     Supplier,
     PurchaseOrder,
     PurchaseOrderItem,
-    FlashSale
+    FlashSale,
+    UserProductInteraction
 };
