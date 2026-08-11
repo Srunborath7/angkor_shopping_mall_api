@@ -7,7 +7,7 @@ const PORT = process.env.PORT || 3000;
 const {setupWebhook} = require("./src/config/telegram");
 
 sequelize
-  .sync()
+  .sync({ alter: true })
   .then(() => {
     console.log("Database connected.");
     server.listen(PORT, () => {

@@ -1,15 +1,23 @@
-const { Order, OrderItem, CartItem, Product, ProductVariant, User, Category, Brand } = require('../models/relationships');
+const { Order, OrderItem, CartItem, Product, ProductVariant, ProductImage, User, Category, Brand } = require('../models/relationships');
 const { successResponse, errorResponse } = require('../utils/response');
 const paymentService = require('../services/paymentService');
 const { bot } = require('../config/telegram');
 const { trackInteractionBulk } = require('../utils/trackInteraction');
 
-// Helper to build the standard OrderItem includes (product + variant)
+// Helper to build the standard OrderItem includes (product + variant + images)
 const orderItemIncludes = () => [
     {
         model: Product,
         as: 'product',
-        attributes: ['id', 'name', 'price', 'image_url', 'stock_quantity'],
+        attributes: ['id', 'name', 'price', 'stock_quantity'],
+        include: [
+            {
+                model: ProductImage,
+                as: 'images',
+                attributes: ['id', 'image_url', 'is_primary'],
+                required: false
+            }
+        ]
     },
     {
         model: ProductVariant,
