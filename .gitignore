@@ -1,3 +1,4 @@
 node_modules/
+.env
 .envsrc/ml/.venv/
 src/ml/.venv/
