@@ -1,4 +1,4 @@
-const { Order, OrderItem, CartItem, Product, ProductVariant, ProductImage, User, Category, Brand } = require('../models/relationships');
+const { Order, OrderItem, CartItem, Product, ProductVariant, ProductImage, User, Category, Brand, FlashSale } = require('../models/relationships');
 const { successResponse, errorResponse } = require('../utils/response');
 const paymentService = require('../services/paymentService');
 const { bot } = require('../config/telegram');
@@ -41,7 +41,13 @@ class OrderController {
             const cartItems = await CartItem.findAll({
                 where: { user_id: userId },
                 include: [
-                    { model: Product, as: 'product' },
+                    { 
+                        model: Product, 
+                        as: 'product',
+                        include: [
+                            { model: FlashSale, as: 'flashSales', required: false, where: { status: 'active' } }
+                        ]
+                    },
                     { model: ProductVariant, as: 'variant', required: false }
                 ]
             });
@@ -65,10 +71,14 @@ class OrderController {
                     return errorResponse(res, `Insufficient stock for product: ${item.product.name}. Available: ${effectiveStock}`, 400);
                 }
 
-                // Use variant price if available, otherwise product price
-                const effectivePrice = item.variant?.price
+                // Use flash sale price if active, else variant price if available, otherwise product price
+                let effectivePrice = item.variant?.price
                     ? parseFloat(item.variant.price)
                     : parseFloat(item.product.price);
+
+                if (item.product?.flashSales && item.product.flashSales.length > 0) {
+                    effectivePrice = parseFloat(item.product.flashSales[0].price);
+                }
 
                 totalAmount += effectivePrice * item.quantity;
             }
@@ -84,9 +94,13 @@ class OrderController {
 
             // 4. Create Order Items with variant_id + attributes snapshot, decrease stock
             for (const item of cartItems) {
-                const effectivePrice = item.variant?.price
+                let effectivePrice = item.variant?.price
                     ? parseFloat(item.variant.price)
                     : parseFloat(item.product.price);
+
+                if (item.product?.flashSales && item.product.flashSales.length > 0) {
+                    effectivePrice = parseFloat(item.product.flashSales[0].price);
+                }
 
                 const attributesSnapshot = item.attributes && Object.keys(item.attributes).length > 0
                     ? item.attributes

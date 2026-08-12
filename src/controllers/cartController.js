@@ -1,4 +1,4 @@
-const { CartItem, Product, ProductVariant, Category, Brand } = require('../models/relationships');
+const { CartItem, Product, ProductVariant, Category, Brand, FlashSale } = require('../models/relationships');
 const { successResponse, errorResponse } = require('../utils/response');
 
 class CartController {
@@ -13,7 +13,8 @@ class CartController {
                         as: 'product',
                         include: [
                             { model: Category, as: 'category' },
-                            { model: Brand, as: 'brand' }
+                            { model: Brand, as: 'brand' },
+                            { model: FlashSale, as: 'flashSales', required: false, where: { status: 'active' } }
                         ]
                     },
                     {
@@ -25,12 +26,17 @@ class CartController {
                 order: [['created_at', 'ASC']]
             });
 
-            // Calculate totals — use variant price if available
+            // Calculate totals — use flash sale price or variant price if available
             let subtotal = 0;
             const formattedItems = items.map(item => {
-                const effectivePrice = item.variant?.price
+                let effectivePrice = item.variant?.price
                     ? parseFloat(item.variant.price)
                     : parseFloat(item.product?.price || 0);
+
+                if (item.product?.flashSales && item.product.flashSales.length > 0) {
+                    effectivePrice = parseFloat(item.product.flashSales[0].price);
+                }
+
                 const itemTotal = effectivePrice * item.quantity;
                 subtotal += itemTotal;
                 return {
