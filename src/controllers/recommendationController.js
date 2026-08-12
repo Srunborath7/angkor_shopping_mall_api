@@ -69,7 +69,7 @@ async function getPopular(req, res) {
 
 // ─────────────────────────────────────────────
 // GET /api/recommendations/search?q=keyword
-// No auth needed. Combines text search with popularity boosting.
+// No auth needed. Combines text search with AI suggestions, categories & brands.
 // ─────────────────────────────────────────────
 async function getSearchRecommendations(req, res) {
     try {
@@ -80,14 +80,9 @@ async function getSearchRecommendations(req, res) {
             return errorResponse(res, 'Search query (q) is required', 400);
         }
 
-        const products = await getSearchSuggestions(query, limit);
+        const suggestions = await getSearchSuggestions(query, limit);
 
-        return successResponse(res, 'Search suggestions fetched successfully', {
-            source:  'search',
-            query,
-            count:   products.length,
-            products,
-        });
+        return successResponse(res, 'Search suggestions fetched successfully', suggestions);
     } catch (error) {
         console.error('[recommendationController] getSearchRecommendations:', error.message);
         return errorResponse(res, 'Failed to fetch search suggestions', 500);

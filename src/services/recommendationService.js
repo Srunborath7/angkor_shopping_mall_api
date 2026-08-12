@@ -172,21 +172,53 @@ async function getSameCategoryProducts(productId, limit = 8) {
 }
 
 // ─────────────────────────────────────────────
-// 4. Search-based suggestions
+// 4. FB-style AI search-based suggestions
 // ─────────────────────────────────────────────
 
 /**
- * Products matching a keyword, optionally boosted by popularity within that category.
+ * AI-enhanced search suggestions.
+ * Returns matching categories, brands, direct product matches (ranked by popularity),
+ * and AI-suggested related models/products based on ML embeddings.
  */
 async function getSearchSuggestions(query, limit = 10) {
-    if (!query?.trim()) return [];
+    const trimmed = query?.trim() || '';
+    if (!trimmed) {
+        return {
+            source: 'search',
+            query: '',
+            categories: [],
+            brands: [],
+            products: [],
+            ai_suggestions: [],
+        };
+    }
 
+    // 1. Matching categories by name
+    const categories = await Category.findAll({
+        where: { name: { [Op.iLike]: `%${trimmed}%` } },
+        attributes: ['id', 'name'],
+        limit: 5,
+    });
+
+    // 2. Matching brands by name
+    const brands = await Brand.findAll({
+        where: { name: { [Op.iLike]: `%${trimmed}%` } },
+        attributes: ['id', 'name'],
+        limit: 5,
+    });
+
+    const categoryIds = categories.map((c) => c.id);
+    const brandIds    = brands.map((b) => b.id);
+
+    // 3. Direct matching products (by product title/desc or matching category/brand)
     const products = await Product.findAll({
         where: {
             is_active: true,
             [Op.or]: [
-                { name:        { [Op.iLike]: `%${query}%` } },
-                { description: { [Op.iLike]: `%${query}%` } },
+                { name:        { [Op.iLike]: `%${trimmed}%` } },
+                { description: { [Op.iLike]: `%${trimmed}%` } },
+                ...(categoryIds.length ? [{ category_id: { [Op.in]: categoryIds } }] : []),
+                ...(brandIds.length    ? [{ brand_id:    { [Op.in]: brandIds } }] : []),
             ],
         },
         include: PRODUCT_INCLUDE,
@@ -194,26 +226,81 @@ async function getSearchSuggestions(query, limit = 10) {
         limit:   limit * 2,
     });
 
-    // Boost ordering by interaction weight for returned products
-    if (!products.length) return [];
+    // Extract categories/brands from found products if not already matched
+    const categoryMap = new Map(categories.map((c) => [c.id, c.toJSON ? c.toJSON() : c]));
+    const brandMap    = new Map(brands.map((b) => [b.id, b.toJSON ? b.toJSON() : b]));
 
-    const ids = products.map((p) => p.id);
-    const weightRows = await UserProductInteraction.findAll({
-        attributes: ['product_id', [fn('SUM', col('weight')), 'total_weight']],
-        where:  { product_id: ids },
-        group:  ['product_id'],
-        raw:    true,
-    });
+    for (const p of products) {
+        if (p.category && !categoryMap.has(p.category.id)) {
+            categoryMap.set(p.category.id, { id: p.category.id, name: p.category.name });
+        }
+        if (p.brand && !brandMap.has(p.brand.id)) {
+            brandMap.set(p.brand.id, { id: p.brand.id, name: p.brand.name });
+        }
+    }
 
-    const weightMap = new Map(weightRows.map((r) => [r.product_id, Number(r.total_weight)]));
+    // Sort products by interaction weight popularity
+    let sortedProducts = products;
+    if (products.length > 0) {
+        const productIds = products.map((p) => p.id);
+        const weightRows = await UserProductInteraction.findAll({
+            attributes: ['product_id', [fn('SUM', col('weight')), 'total_weight']],
+            where:  { product_id: productIds },
+            group:  ['product_id'],
+            raw:    true,
+        });
 
-    const sorted = products
-        .map((p) => ({ product: p, weight: weightMap.get(p.id) || 0 }))
-        .sort((a, b) => b.weight - a.weight)
-        .map((x) => x.product)
-        .slice(0, limit);
+        const weightMap = new Map(weightRows.map((r) => [r.product_id, Number(r.total_weight)]));
 
-    return sorted;
+        sortedProducts = products
+            .map((p) => ({ product: p, weight: weightMap.get(p.id) || 0 }))
+            .sort((a, b) => b.weight - a.weight)
+            .map((x) => x.product)
+            .slice(0, limit);
+    }
+
+    // 4. AI-suggested related models via ML cosine similarity or category matching
+    let ai_suggestions = [];
+    const directMatchedIds = new Set(sortedProducts.map((p) => p.id));
+
+    if (sortedProducts.length > 0) {
+        const topProductId = sortedProducts[0].id;
+        try {
+            const similarItems = await getSimilarProducts(topProductId, 8);
+            ai_suggestions = similarItems.filter((p) => !directMatchedIds.has(p.id));
+        } catch (err) {
+            console.warn('[RecommendationService] AI suggestion retrieval failed:', err.message);
+        }
+    }
+
+    // Fallback AI suggestions: products from matched categories/brands if ML didn't yield extra items
+    if (!ai_suggestions.length && (categoryMap.size > 0 || brandMap.size > 0)) {
+        const catIds = Array.from(categoryMap.keys());
+        const bIds   = Array.from(brandMap.keys());
+
+        ai_suggestions = await Product.findAll({
+            where: {
+                is_active: true,
+                ...(directMatchedIds.size ? { id: { [Op.notIn]: Array.from(directMatchedIds) } } : {}),
+                [Op.or]: [
+                    ...(catIds.length ? [{ category_id: { [Op.in]: catIds } }] : []),
+                    ...(bIds.length   ? [{ brand_id:    { [Op.in]: bIds } }] : []),
+                ],
+            },
+            include: PRODUCT_INCLUDE,
+            order:   [['created_at', 'DESC']],
+            limit:   6,
+        });
+    }
+
+    return {
+        source:         'ai_enhanced_search',
+        query:          trimmed,
+        categories:     Array.from(categoryMap.values()).slice(0, 5),
+        brands:         Array.from(brandMap.values()).slice(0, 5),
+        products:       sortedProducts,
+        ai_suggestions: ai_suggestions.slice(0, 8),
+    };
 }
 
 module.exports = {
