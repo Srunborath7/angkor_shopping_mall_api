@@ -1,5 +1,5 @@
 const sequelize = require('../config/db');
-const { Product, ProductVariant, ProductDetail, ProductImage, Category, Brand, ProductReview, User, FlashSale } = require('../models/relationships');
+const { Product, ProductVariant, ProductDetail, ProductImage, Category, Brand, ProductReview, User } = require('../models/relationships');
 const { Op } = require('sequelize');
 
 class ProductService {
@@ -28,7 +28,6 @@ class ProductService {
                 { model: Category, as: 'category' },
                 { model: Brand, as: 'brand' },
                 { model: ProductImage, as: 'images' },
-                { model: FlashSale, as: 'flashSales', required: false, where: { status: 'active' } },
                 { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
                 { model: User, as: 'updater', attributes: ['id', 'name', 'email'] }
             ],
@@ -64,7 +63,6 @@ class ProductService {
                 { model: Category, as: 'category' },
                 { model: Brand, as: 'brand' },
                 { model: ProductImage, as: 'images' },
-                { model: FlashSale, as: 'flashSales', required: false, where: { status: 'active' } },
                 { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
                 { model: User, as: 'updater', attributes: ['id', 'name', 'email'] }
             ],
@@ -103,7 +101,6 @@ class ProductService {
                 },
                 { model: ProductDetail, as: 'detail' },
                 { model: ProductImage, as: 'images' },
-                { model: FlashSale, as: 'flashSales', required: false, where: { status: 'active' } },
                 {
                     model: ProductReview,
                     as: 'reviews',
