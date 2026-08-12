@@ -47,6 +47,7 @@ class CartController {
                     attributes: item.attributes || {},
                     product: item.product,
                     variant: item.variant,
+                    price: effectivePrice,
                     total_price: itemTotal.toFixed(2)
                 };
             });
