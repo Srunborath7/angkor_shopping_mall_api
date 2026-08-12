@@ -143,7 +143,15 @@ const handleTelegramWebhook = async (req, res) => {
 // ================================
 const setupWebhook = async () => {
     try {
-        const url = `${process.env.APP_URL}/telegram/webhook`;
+        const baseUrl = process.env.APP_URL || process.env.SERVER_URL;
+
+        if (!baseUrl || baseUrl.trim() === "" || baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1") || baseUrl.startsWith("undefined")) {
+            console.warn("⚠️ Telegram webhook skipped: APP_URL is missing, undefined, or local environment. Telegram webhooks require a public HTTPS URL.");
+            return;
+        }
+
+        const cleanBaseUrl = baseUrl.trim().replace(/\/$/, "");
+        const url = `${cleanBaseUrl}/telegram/webhook`;
 
         console.log("Setting Telegram webhook:", url);
 
@@ -154,7 +162,7 @@ const setupWebhook = async () => {
     } catch (error) {
         console.error(
             "Telegram webhook setup error:",
-            error
+            error.message || error
         );
     }
 };

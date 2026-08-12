@@ -33,8 +33,13 @@ class CartController {
                     ? parseFloat(item.variant.price)
                     : parseFloat(item.product?.price || 0);
 
-                if (item.product?.flashSales && item.product.flashSales.length > 0) {
-                    effectivePrice = parseFloat(item.product.flashSales[0].price);
+                const isFlashItem = item.attributes && (item.attributes.is_flash_sale || item.attributes.flash_price);
+                if (isFlashItem) {
+                    if (item.attributes.flash_price) {
+                        effectivePrice = parseFloat(item.attributes.flash_price);
+                    } else if (item.product?.flashSales && item.product.flashSales.length > 0) {
+                        effectivePrice = parseFloat(item.product.flashSales[0].price);
+                    }
                 }
 
                 const itemTotal = effectivePrice * item.quantity;
@@ -83,13 +88,20 @@ class CartController {
                 }
             }
 
-            // Check if same product+variant is already in user's cart
-            let cartItem = await CartItem.findOne({
+            const incomingIsFlash = !!(attributes && (attributes.is_flash_sale || attributes.flash_price));
+
+            // Check if same product+variant with same flash sale status is already in user's cart
+            const cartItems = await CartItem.findAll({
                 where: {
                     user_id: userId,
                     product_id,
                     variant_id: variant_id || null
                 }
+            });
+
+            let cartItem = cartItems.find(item => {
+                const itemIsFlash = !!(item.attributes && (item.attributes.is_flash_sale || item.attributes.flash_price));
+                return itemIsFlash === incomingIsFlash;
             });
 
             if (cartItem) {

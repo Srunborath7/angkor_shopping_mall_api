@@ -71,13 +71,18 @@ class OrderController {
                     return errorResponse(res, `Insufficient stock for product: ${item.product.name}. Available: ${effectiveStock}`, 400);
                 }
 
-                // Use flash sale price if active, else variant price if available, otherwise product price
+                // Use flash sale price if flash sale item, else variant price if available, otherwise original product price
                 let effectivePrice = item.variant?.price
                     ? parseFloat(item.variant.price)
                     : parseFloat(item.product.price);
 
-                if (item.product?.flashSales && item.product.flashSales.length > 0) {
-                    effectivePrice = parseFloat(item.product.flashSales[0].price);
+                const isFlashItem = item.attributes && (item.attributes.is_flash_sale || item.attributes.flash_price);
+                if (isFlashItem) {
+                    if (item.attributes.flash_price) {
+                        effectivePrice = parseFloat(item.attributes.flash_price);
+                    } else if (item.product?.flashSales && item.product.flashSales.length > 0) {
+                        effectivePrice = parseFloat(item.product.flashSales[0].price);
+                    }
                 }
 
                 totalAmount += effectivePrice * item.quantity;
@@ -98,8 +103,13 @@ class OrderController {
                     ? parseFloat(item.variant.price)
                     : parseFloat(item.product.price);
 
-                if (item.product?.flashSales && item.product.flashSales.length > 0) {
-                    effectivePrice = parseFloat(item.product.flashSales[0].price);
+                const isFlashItem = item.attributes && (item.attributes.is_flash_sale || item.attributes.flash_price);
+                if (isFlashItem) {
+                    if (item.attributes.flash_price) {
+                        effectivePrice = parseFloat(item.attributes.flash_price);
+                    } else if (item.product?.flashSales && item.product.flashSales.length > 0) {
+                        effectivePrice = parseFloat(item.product.flashSales[0].price);
+                    }
                 }
 
                 const attributesSnapshot = item.attributes && Object.keys(item.attributes).length > 0
