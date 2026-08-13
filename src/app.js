@@ -35,7 +35,7 @@ app.use(express.urlencoded({ extended: true }));
 const {
     handleTelegramWebhook
 } = require("./config/telegram");
-//test
+
 app.post(
     "/telegram/webhook",
     handleTelegramWebhook
