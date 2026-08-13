@@ -12,7 +12,7 @@ class FlashSaleService {
                 model: Product,
                 as: 'product',
                 required: false,
-                attributes: ['id', 'name', 'price', 'image_url'],
+                attributes: ['id', 'name', 'price'],
                 include: [
                     {
                         model: ProductImage,
