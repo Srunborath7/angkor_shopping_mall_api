@@ -7,137 +7,139 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 from model import RecommendationModel
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, "model")
 
-MODEL_DIR = "model"
+NUM_USERS = 0
+NUM_PRODUCTS = 0
+EMBEDDING_DIM = 64
 
-
-# -----------------------------------------------
-# Load model metadata
-# -----------------------------------------------
-
-with open(os.path.join(MODEL_DIR, "model_meta.json")) as f:
-    meta = json.load(f)
-
-NUM_USERS     = meta["num_users"]
-NUM_PRODUCTS  = meta["num_products"]
-EMBEDDING_DIM = meta["embedding_dim"]
-
-
-# -----------------------------------------------
-# Load ID mappings
-# -----------------------------------------------
-
-with open(os.path.join(MODEL_DIR, "user_mapping.json")) as f:
-    user_mapping = json.load(f)
-
-with open(os.path.join(MODEL_DIR, "product_mapping.json")) as f:
-    product_mapping = json.load(f)
-
-reverse_products = {
-    int(idx): pid
-    for pid, idx in product_mapping.items()
-}
+user_mapping = {}
+product_mapping = {}
+reverse_products = {}
+model = None
+_product_indices = None
+_product_embeddings = None
 
 
-# -----------------------------------------------
-# Build and load model
-# -----------------------------------------------
+def load_model_state():
+    global NUM_USERS, NUM_PRODUCTS, EMBEDDING_DIM
+    global user_mapping, product_mapping, reverse_products
+    global model, _product_indices, _product_embeddings
 
-model = RecommendationModel(
-    num_users    = NUM_USERS,
-    num_products = NUM_PRODUCTS,
-    embedding_dim= EMBEDDING_DIM,
-)
+    meta_path = os.path.join(MODEL_PATH, "model_meta.json")
+    user_map_path = os.path.join(MODEL_PATH, "user_mapping.json")
+    prod_map_path = os.path.join(MODEL_PATH, "product_mapping.json")
+    weights_path = os.path.join(MODEL_PATH, "recommendation.weights.h5")
 
-# Warm up model to build weights before loading
-model(tf.constant([0]), tf.constant([0]))
+    if not (os.path.exists(meta_path) and os.path.exists(weights_path)):
+        print("[predict] Warning: Trained model files missing in model directory.")
+        return False
 
-model.load_weights(
-    os.path.join(MODEL_DIR, "recommendation.weights.h5")
-)
+    with open(meta_path) as f:
+        meta = json.load(f)
 
-print(f"[predict] Model loaded — {NUM_USERS} users, {NUM_PRODUCTS} products.")
+    NUM_USERS = meta["num_users"]
+    NUM_PRODUCTS = meta["num_products"]
+    EMBEDDING_DIM = meta["embedding_dim"]
+
+    with open(user_map_path) as f:
+        user_mapping = json.load(f)
+
+    with open(prod_map_path) as f:
+        product_mapping = json.load(f)
+
+    reverse_products = {int(idx): pid for pid, idx in product_mapping.items()}
+
+    model = RecommendationModel(
+        num_users=NUM_USERS,
+        num_products=NUM_PRODUCTS,
+        embedding_dim=EMBEDDING_DIM,
+    )
+
+    # Warm up model to build weights before loading
+    model(tf.constant([0]), tf.constant([0]))
+    model.load_weights(weights_path)
+
+    _product_indices = np.arange(NUM_PRODUCTS, dtype=np.int32)
+    _product_embeddings = model.product_embedding(
+        tf.constant(_product_indices)
+    ).numpy()
+
+    print(f"[predict] Loaded model state — {NUM_USERS} users, {NUM_PRODUCTS} products.")
+    return True
 
 
-# -----------------------------------------------
-# Pre-compute product embedding matrix
-# (used for cosine-similarity similar-product lookup)
-# -----------------------------------------------
-
-_product_indices  = np.arange(NUM_PRODUCTS, dtype=np.int32)
-_product_embeddings = model.product_embedding(
-    tf.constant(_product_indices)
-).numpy()  # shape: (NUM_PRODUCTS, EMBEDDING_DIM)
+# Load initial state on module import
+load_model_state()
 
 
-# -----------------------------------------------
-# Personalised recommendations
-# -----------------------------------------------
-
-def recommend(user_id: str, count: int = 10) -> dict:
+def recommend(user_id: str, count: int = 10, recent_product_ids: list = None) -> dict:
     """
-    Return top-`count` products for `user_id`.
-
-    Returns:
-        {
-            "unknown_user": bool,
-            "recommendations": [{"product_id": str, "score": float}, ...]
-        }
+    Return top-`count` recommendations for `user_id`.
+    Combines BPR collaborative filtering with recent search/view similarity vectors.
     """
-    uid = str(user_id)
-
-    if uid not in user_mapping:
+    if model is None or _product_embeddings is None:
         return {"unknown_user": True, "recommendations": []}
 
-    user_index = user_mapping[uid]
+    uid = str(user_id)
+    has_user = uid in user_mapping
+    scores = np.zeros(NUM_PRODUCTS, dtype=np.float32)
 
-    user_indices = np.full(NUM_PRODUCTS, user_index, dtype=np.int32)
+    if has_user:
+        user_index = user_mapping[uid]
+        user_indices = np.full(NUM_PRODUCTS, user_index, dtype=np.int32)
+        scores = model(
+            tf.constant(user_indices, dtype=tf.int32),
+            tf.constant(_product_indices, dtype=tf.int32),
+        ).numpy()
 
-    scores = model(
-        tf.constant(user_indices, dtype=tf.int32),
-        tf.constant(_product_indices, dtype=tf.int32),
-    ).numpy()
+    # Blend in user's recent search & view interaction intent vector
+    recent_indices = []
+    if recent_product_ids:
+        for rpid in recent_product_ids:
+            spid = str(rpid)
+            if spid in product_mapping:
+                recent_indices.append(int(product_mapping[spid]))
+
+    if recent_indices:
+        user_intent_vec = np.mean(_product_embeddings[recent_indices], axis=0, keepdims=True)
+        sims = cosine_similarity(user_intent_vec, _product_embeddings)[0]
+        # Weight real-time search/view intent heavily
+        scores = scores + (sims * 3.0)
+
+    if not has_user and not recent_indices:
+        return {"unknown_user": True, "recommendations": []}
 
     top_indices = np.argsort(scores)[::-1][:count]
 
     recommendations = [
         {
             "product_id": reverse_products[int(idx)],
-            "score":      float(scores[idx]),
+            "score": float(scores[idx]),
         }
         for idx in top_indices
     ]
 
-    return {"unknown_user": False, "recommendations": recommendations}
+    return {"unknown_user": not has_user, "recommendations": recommendations}
 
-
-# -----------------------------------------------
-# Similar products (cosine similarity on embeddings)
-# -----------------------------------------------
 
 def similar(product_id: str, count: int = 8) -> dict:
     """
     Return products most similar to `product_id` by embedding cosine similarity.
-
-    Returns:
-        {
-            "unknown_product": bool,
-            "similar": [{"product_id": str, "score": float}, ...]
-        }
     """
+    if model is None or _product_embeddings is None:
+        return {"unknown_product": True, "similar": []}
+
     pid = str(product_id)
 
     if pid not in product_mapping:
         return {"unknown_product": True, "similar": []}
 
     product_index = int(product_mapping[pid])
+    query_vec = _product_embeddings[product_index].reshape(1, -1)
 
-    query_vec = _product_embeddings[product_index].reshape(1, -1)  # (1, D)
-
-    # Cosine similarity against every product embedding
-    sims = cosine_similarity(query_vec, _product_embeddings)[0]  # (NUM_PRODUCTS,)
-
-    # Exclude the query product itself
+    sims = cosine_similarity(query_vec, _product_embeddings)[0]
     sims[product_index] = -np.inf
 
     top_indices = np.argsort(sims)[::-1][:count]
@@ -145,7 +147,7 @@ def similar(product_id: str, count: int = 8) -> dict:
     results = [
         {
             "product_id": reverse_products[int(idx)],
-            "score":      float(sims[idx]),
+            "score": float(sims[idx]),
         }
         for idx in top_indices
         if sims[idx] > -np.inf

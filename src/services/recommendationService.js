@@ -1,9 +1,8 @@
 /**
  * recommendationService.js
  *
- * Service layer for all recommendation logic.
- * Handles ML server communication with graceful fallback to DB-level
- * user-centric interest personalization when the Python ML service is unavailable or warming up.
+ * Service layer for Facebook-style user recommendation logic.
+ * Handles ML server communication with hybrid search/view intent vector scoring and graceful DB fallback.
  */
 
 const axios = require('axios');
@@ -34,6 +33,16 @@ async function isMLHealthy() {
     }
 }
 
+async function triggerMLTraining() {
+    try {
+        const data = await callML('/train', {});
+        return { success: true, data };
+    } catch (err) {
+        console.error('[RecommendationService] Trigger training failed:', err.message);
+        return { success: false, message: err.message };
+    }
+}
+
 // ─────────────────────────────────────────────
 // Product enrichment helper
 // ─────────────────────────────────────────────
@@ -52,9 +61,28 @@ async function hydrateProducts(productIds) {
         include: PRODUCT_INCLUDE,
     });
 
-    // Preserve caller-supplied order
     const map = new Map(products.map((p) => [p.id, p]));
     return productIds.map((id) => map.get(id)).filter(Boolean);
+}
+
+/**
+ * Fetch product IDs recently searched or viewed by user
+ */
+async function getRecentUserInteractionProductIds(userId, limit = 15) {
+    if (!userId) return [];
+    try {
+        const rows = await UserProductInteraction.findAll({
+            attributes: ['product_id'],
+            where: { user_id: userId },
+            order: [['created_at', 'DESC']],
+            limit,
+            raw: true,
+        });
+        return Array.from(new Set(rows.map((r) => r.product_id)));
+    } catch (err) {
+        console.warn('[getRecentUserInteractionProductIds] Error:', err.message);
+        return [];
+    }
 }
 
 // ─────────────────────────────────────────────
@@ -62,46 +90,52 @@ async function hydrateProducts(productIds) {
 // ─────────────────────────────────────────────
 
 /**
- * DB-level personalization fallback based on user's interaction history.
- * Used when the user is new to the ML model matrix or when the ML service is offline.
+ * DB-level personalization fallback based on user's interaction history (view & search).
+ * Ensures User A (who viewed/searched A & B) gets only products matching categories/brands of A & B.
  */
 async function getUserPersonalizedProducts(userId, limit = 10) {
-    if (!userId) return { products: [], source: 'no_user' };
+    if (!userId) return { products: [], source: 'no_user', user_interests: {} };
 
     try {
-        // Get products the user has previously interacted with
         const userInteractions = await UserProductInteraction.findAll({
             attributes: [
                 'product_id',
+                'interaction_type',
                 [fn('SUM', col('weight')), 'total_weight'],
             ],
             where: { user_id: userId },
-            group: ['product_id'],
+            group: ['product_id', 'interaction_type'],
             order: [[literal('total_weight'), 'DESC']],
-            limit: 25,
+            limit: 30,
             raw: true,
         });
 
         if (!userInteractions.length) {
-            return { products: [], source: 'no_history' };
+            return { products: [], source: 'no_history', user_interests: {} };
         }
 
-        const interactedProductIds = userInteractions.map((r) => r.product_id);
+        const interactedProductIds = Array.from(new Set(userInteractions.map((r) => r.product_id)));
         const interactedProducts   = await Product.findAll({
             where: { id: interactedProductIds },
-            attributes: ['id', 'category_id', 'brand_id'],
-            raw: true,
+            include: [
+                { model: Category, as: 'category', attributes: ['id', 'name'] },
+                { model: Brand,    as: 'brand',    attributes: ['id', 'name'] },
+            ],
         });
 
         const categoryCounts = {};
+        const categoryNames  = {};
         const brandCounts    = {};
+        const brandNames     = {};
 
         interactedProducts.forEach((p) => {
             if (p.category_id) {
                 categoryCounts[p.category_id] = (categoryCounts[p.category_id] || 0) + 1;
+                if (p.category) categoryNames[p.category_id] = p.category.name;
             }
             if (p.brand_id) {
                 brandCounts[p.brand_id] = (brandCounts[p.brand_id] || 0) + 1;
+                if (p.brand) brandNames[p.brand_id] = p.brand.name;
             }
         });
 
@@ -109,10 +143,9 @@ async function getUserPersonalizedProducts(userId, limit = 10) {
         const topBrands     = Object.keys(brandCounts).sort((a, b) => brandCounts[b] - brandCounts[a]);
 
         if (!topCategories.length && !topBrands.length) {
-            return { products: [], source: 'no_preference' };
+            return { products: [], source: 'no_preference', user_interests: {} };
         }
 
-        // Find products matching user's top categories or brands
         const matchedProducts = await Product.findAll({
             where: {
                 is_active: true,
@@ -123,7 +156,7 @@ async function getUserPersonalizedProducts(userId, limit = 10) {
             },
             include: PRODUCT_INCLUDE,
             order: [['created_at', 'DESC']],
-            limit: limit * 2,
+            limit: limit * 3,
         });
 
         const topCatSet   = new Set(topCategories);
@@ -131,18 +164,40 @@ async function getUserPersonalizedProducts(userId, limit = 10) {
 
         const scored = matchedProducts.map((p) => {
             let score = 0;
-            if (topCatSet.has(p.category_id)) score += 3;
-            if (topBrandSet.has(p.brand_id)) score += 2;
-            return { product: p, score };
+            let reason = 'Recommended for you';
+
+            if (topCatSet.has(p.category_id)) {
+                score += 5;
+                const catName = categoryNames[p.category_id] || 'your liked categories';
+                reason = `Suggested based on your search & view of ${catName}`;
+            }
+            if (topBrandSet.has(p.brand_id)) {
+                score += 3;
+                const bName = brandNames[p.brand_id] || 'your liked brands';
+                if (score > 5) {
+                    reason += ` & ${bName}`;
+                } else {
+                    reason = `Suggested based on your interest in ${bName}`;
+                }
+            }
+
+            const pObj = p.toJSON ? p.toJSON() : p;
+            pObj.recommendation_reason = reason;
+            return { product: pObj, score };
         });
 
         scored.sort((a, b) => b.score - a.score);
         const resultProducts = scored.map((s) => s.product).slice(0, limit);
 
-        return { products: resultProducts, source: 'user_history_personalized' };
+        const userInterests = {
+            top_categories: topCategories.map((id) => categoryNames[id]).filter(Boolean),
+            top_brands:     topBrands.map((id) => brandNames[id]).filter(Boolean),
+        };
+
+        return { products: resultProducts, source: 'user_history_personalized', user_interests: userInterests };
     } catch (err) {
         console.error('[getUserPersonalizedProducts] Error:', err.message);
-        return { products: [], source: 'error' };
+        return { products: [], source: 'error', user_interests: {} };
     }
 }
 
@@ -152,21 +207,38 @@ async function getUserPersonalizedProducts(userId, limit = 10) {
 
 /**
  * Fetch ML-ranked recommendations for a user.
- * Falls back to user-centric DB history, then to overall popular products.
+ * Incorporates real-time search/view intent product IDs.
  */
 async function getMLRecommendations(userId, limit = 10) {
+    const recentPids = await getRecentUserInteractionProductIds(userId, 15);
+
     try {
-        const data = await callML('/recommend', { user_id: String(userId), count: limit });
+        const data = await callML('/recommend', {
+            user_id: strOrNull(userId),
+            count: limit,
+            recent_product_ids: recentPids,
+        });
 
         if (!data.unknown_user && data.recommendations?.length) {
             const productIds = data.recommendations.map((r) => r.product_id);
+            const scoreMap   = new Map(data.recommendations.map((r) => [r.product_id, r.score]));
             const products   = await hydrateProducts(productIds);
+
             if (products.length > 0) {
-                return { products, source: 'ml', scores: data.recommendations };
+                const enriched = products.map((p) => {
+                    const pObj = p.toJSON ? p.toJSON() : p;
+                    const catName = p.category?.name;
+                    pObj.score = scoreMap.get(p.id) || 0;
+                    pObj.recommendation_reason = catName
+                        ? `Suggested for you based on your views & searches in ${catName}`
+                        : 'Personalized recommendation based on your shopping profile';
+                    return pObj;
+                });
+                return { products: enriched, source: 'ml_personalized', user_interests: { recent_view_count: recentPids.length } };
             }
         }
     } catch (err) {
-        console.warn('[RecommendationService] ML server unavailable:', err.message);
+        console.warn('[RecommendationService] ML server call failed:', err.message);
     }
 
     // Fallback 1: User-centric history personalization
@@ -177,17 +249,17 @@ async function getMLRecommendations(userId, limit = 10) {
 
     // Fallback 2: Global popular products
     const popular = await getPopularProducts(limit);
-    return { products: popular, source: 'popular' };
+    return { products: popular, source: 'popular', user_interests: {} };
+}
+
+function strOrNull(val) {
+    return val ? String(val) : '';
 }
 
 // ─────────────────────────────────────────────
-// 2. Popular products (DB fallback, no ML needed)
+// 2. Popular products
 // ─────────────────────────────────────────────
 
-/**
- * Returns products ranked by total interaction weight in the DB.
- * Works even when the ML service is offline.
- */
 async function getPopularProducts(limit = 10) {
     const topRows = await UserProductInteraction.findAll({
         attributes: [
@@ -207,29 +279,32 @@ async function getPopularProducts(limit = 10) {
     }
 
     const products = await hydrateProducts(productIds);
-    return products.slice(0, limit);
+    return products.slice(0, limit).map((p) => {
+        const pObj = p.toJSON ? p.toJSON() : p;
+        pObj.recommendation_reason = 'Popular item trending on Angkor Mall';
+        return pObj;
+    });
 }
 
-/**
- * Fallback when no interaction data exists — newest active products.
- */
 async function getNewestProducts(limit = 10) {
-    return Product.findAll({
+    const products = await Product.findAll({
         where:   { is_active: true },
         include: PRODUCT_INCLUDE,
         order:   [['created_at', 'DESC']],
         limit,
     });
+
+    return products.map((p) => {
+        const pObj = p.toJSON ? p.toJSON() : p;
+        pObj.recommendation_reason = 'Newly added product';
+        return pObj;
+    });
 }
 
 // ─────────────────────────────────────────────
-// 3. Similar products (ML embedding cosine similarity)
+// 3. Similar products
 // ─────────────────────────────────────────────
 
-/**
- * Products similar to a given product via the ML embedding space.
- * Falls back to same-category products when ML is unavailable.
- */
 async function getSimilarProducts(productId, limit = 8) {
     try {
         const data = await callML('/similar', { product_id: String(productId), count: limit });
@@ -240,21 +315,22 @@ async function getSimilarProducts(productId, limit = 8) {
 
         const productIds = data.similar.map((r) => r.product_id);
         const products   = await hydrateProducts(productIds);
-        return products;
+        return products.map((p) => {
+            const pObj = p.toJSON ? p.toJSON() : p;
+            pObj.recommendation_reason = 'Similar item matching this product';
+            return pObj;
+        });
     } catch (err) {
         console.warn('[RecommendationService] Similar-products ML call failed:', err.message);
         return getSameCategoryProducts(productId, limit);
     }
 }
 
-/**
- * DB fallback: products in the same category, excluding the queried product.
- */
 async function getSameCategoryProducts(productId, limit = 8) {
     const source = await Product.findByPk(productId, { attributes: ['id', 'category_id'] });
     if (!source) return [];
 
-    return Product.findAll({
+    const products = await Product.findAll({
         where: {
             is_active:   true,
             category_id: source.category_id,
@@ -264,17 +340,18 @@ async function getSameCategoryProducts(productId, limit = 8) {
         order:   [['created_at', 'DESC']],
         limit,
     });
+
+    return products.map((p) => {
+        const pObj = p.toJSON ? p.toJSON() : p;
+        pObj.recommendation_reason = 'More items in this category';
+        return pObj;
+    });
 }
 
 // ─────────────────────────────────────────────
 // 4. FB-style AI search-based suggestions
 // ─────────────────────────────────────────────
 
-/**
- * AI-enhanced search suggestions.
- * Returns matching categories, brands, product models, and AI-suggested related items.
- * Tracks search interactions when userId is supplied for personalized profile building.
- */
 async function getSearchSuggestions(query, limit = 10, userId = null) {
     const trimmed = query?.trim() || '';
     if (!trimmed) {
@@ -290,14 +367,12 @@ async function getSearchSuggestions(query, limit = 10, userId = null) {
         };
     }
 
-    // 1. Matching categories by name
     const categories = await Category.findAll({
         where: { name: { [Op.iLike]: `%${trimmed}%` } },
         attributes: ['id', 'name'],
         limit: 5,
     });
 
-    // 2. Matching brands by name
     const brands = await Brand.findAll({
         where: { name: { [Op.iLike]: `%${trimmed}%` } },
         attributes: ['id', 'name'],
@@ -307,7 +382,6 @@ async function getSearchSuggestions(query, limit = 10, userId = null) {
     const categoryIds = categories.map((c) => c.id);
     const brandIds    = brands.map((b) => b.id);
 
-    // 3. Direct matching products (by product title/desc or matching category/brand)
     const products = await Product.findAll({
         where: {
             is_active: true,
@@ -323,13 +397,11 @@ async function getSearchSuggestions(query, limit = 10, userId = null) {
         limit:   limit * 2,
     });
 
-    // Track search interaction if user is logged in
     if (userId && products.length > 0) {
         const matchedProductIds = products.map((p) => p.id);
         trackInteractionBulk(userId, matchedProductIds, 'search');
     }
 
-    // Extract categories/brands from found products if not already matched
     const categoryMap = new Map(categories.map((c) => [c.id, c.toJSON ? c.toJSON() : c]));
     const brandMap    = new Map(brands.map((b) => [b.id, b.toJSON ? b.toJSON() : b]));
 
@@ -342,7 +414,6 @@ async function getSearchSuggestions(query, limit = 10, userId = null) {
         }
     }
 
-    // Sort products by interaction weight popularity
     let sortedProducts = products;
     if (products.length > 0) {
         const productIds = products.map((p) => p.id);
@@ -362,7 +433,6 @@ async function getSearchSuggestions(query, limit = 10, userId = null) {
             .slice(0, limit);
     }
 
-    // Extract product model names (Facebook-style model suggestions)
     const models = sortedProducts.map((p) => ({
         id:          p.id,
         name:        p.name,
@@ -372,7 +442,6 @@ async function getSearchSuggestions(query, limit = 10, userId = null) {
         primary_img: p.images?.find((img) => img.is_primary)?.image_url || p.image_url || null,
     }));
 
-    // 4. AI-suggested related items via ML cosine similarity or category matching
     let ai_suggestions = [];
     const directMatchedIds = new Set(sortedProducts.map((p) => p.id));
 
@@ -386,7 +455,6 @@ async function getSearchSuggestions(query, limit = 10, userId = null) {
         }
     }
 
-    // Fallback AI suggestions: products from matched categories/brands if ML didn't yield extra items
     if (!ai_suggestions.length && (categoryMap.size > 0 || brandMap.size > 0)) {
         const catIds = Array.from(categoryMap.keys());
         const bIds   = Array.from(brandMap.keys());
@@ -425,4 +493,5 @@ module.exports = {
     getSimilarProducts,
     getSearchSuggestions,
     isMLHealthy,
+    triggerMLTraining,
 };

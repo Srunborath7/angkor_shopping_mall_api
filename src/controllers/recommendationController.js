@@ -1,11 +1,13 @@
 /**
  * recommendationController.js
  *
- * Handles 4 recommendation endpoints:
- *   GET /api/recommendations           – personalised (auth required)
- *   GET /api/recommendations/popular   – trending products (public)
- *   GET /api/recommendations/search    – keyword-based suggestions (public)
- *   GET /api/recommendations/similar/:productId – similar products (public)
+ * Handles recommendation endpoints:
+ *   GET  /api/recommendations           – personalised (auth required)
+ *   POST /api/recommendations/track      – track interaction (view/search/cart/order)
+ *   POST /api/recommendations/train      – trigger ML model training
+ *   GET  /api/recommendations/popular   – trending products (public)
+ *   GET  /api/recommendations/search    – keyword-based suggestions (public/optionalAuth)
+ *   GET  /api/recommendations/similar/:productId – similar products (public)
  */
 
 const {
@@ -13,24 +15,23 @@ const {
     getPopularProducts,
     getSimilarProducts,
     getSearchSuggestions,
+    triggerMLTraining,
 } = require('../services/recommendationService');
 
+const { trackInteraction, trackInteractionBulk } = require('../utils/trackInteraction');
 const { successResponse, errorResponse } = require('../utils/response');
 
 // ─────────────────────────────────────────────
 // GET /api/recommendations
-// Personalised recommendations for the logged-in user.
-// Falls back to popular products when ML is unavailable or user is new.
 // ─────────────────────────────────────────────
 async function getRecommendations(req, res) {
     try {
         const userId = req.user.id;
         const limit  = Math.min(parseInt(req.query.limit) || 10, 50);
 
-        const { products, source } = await getMLRecommendations(userId, limit);
+        const result = await getMLRecommendations(userId, limit);
 
-        // Fallback: user not in ML model yet OR ML offline → popular products
-        if (!products.length) {
+        if (!result.products || !result.products.length) {
             const popular = await getPopularProducts(limit);
             return successResponse(res, 'Showing popular products (personalised model warming up)', {
                 source:   'popular',
@@ -39,8 +40,9 @@ async function getRecommendations(req, res) {
         }
 
         return successResponse(res, 'Personalised recommendations fetched successfully', {
-            source,
-            products,
+            source:         result.source,
+            user_interests: result.user_interests || {},
+            products:       result.products,
         });
     } catch (error) {
         console.error('[recommendationController] getRecommendations:', error.message);
@@ -49,8 +51,55 @@ async function getRecommendations(req, res) {
 }
 
 // ─────────────────────────────────────────────
+// POST /api/recommendations/track
+// Explicit frontend interaction tracker for view/search/cart/order
+// ─────────────────────────────────────────────
+async function trackUserInteraction(req, res) {
+    try {
+        const userId = req.user?.id || null;
+        const { productId, productIds, type = 'view' } = req.body;
+
+        if (!userId) {
+            return errorResponse(res, 'Authentication required to track personalized interaction', 401);
+        }
+
+        if (Array.isArray(productIds) && productIds.length > 0) {
+            await trackInteractionBulk(userId, productIds, type);
+            return successResponse(res, `Bulk interaction '${type}' tracked successfully for ${productIds.length} products`);
+        }
+
+        if (!productId) {
+            return errorResponse(res, 'productId or productIds array is required', 400);
+        }
+
+        await trackInteraction(userId, productId, type);
+        return successResponse(res, `Interaction '${type}' tracked successfully for product ${productId}`);
+    } catch (error) {
+        console.error('[recommendationController] trackUserInteraction:', error.message);
+        return errorResponse(res, 'Failed to track user interaction', 500);
+    }
+}
+
+// ─────────────────────────────────────────────
+// POST /api/recommendations/train
+// Trigger re-training of ML model
+// ─────────────────────────────────────────────
+async function triggerTrain(req, res) {
+    try {
+        const trainResult = await triggerMLTraining();
+        if (!trainResult.success) {
+            return errorResponse(res, trainResult.message || 'Training failed', 500);
+        }
+
+        return successResponse(res, 'Recommendation ML model re-trained successfully', trainResult.data);
+    } catch (error) {
+        console.error('[recommendationController] triggerTrain:', error.message);
+        return errorResponse(res, 'Failed to trigger recommendation training', 500);
+    }
+}
+
+// ─────────────────────────────────────────────
 // GET /api/recommendations/popular
-// No auth needed. Returns products ranked by interaction weight.
 // ─────────────────────────────────────────────
 async function getPopular(req, res) {
     try {
@@ -69,7 +118,6 @@ async function getPopular(req, res) {
 
 // ─────────────────────────────────────────────
 // GET /api/recommendations/search?q=keyword
-// Optional auth. Combines text search with AI suggestions, categories, brands, and personalized tracking.
 // ─────────────────────────────────────────────
 async function getSearchRecommendations(req, res) {
     try {
@@ -92,7 +140,6 @@ async function getSearchRecommendations(req, res) {
 
 // ─────────────────────────────────────────────
 // GET /api/recommendations/similar/:productId
-// No auth needed. Uses ML embeddings; falls back to same-category products.
 // ─────────────────────────────────────────────
 async function getSimilar(req, res) {
     try {
@@ -117,6 +164,8 @@ async function getSimilar(req, res) {
 
 module.exports = {
     getRecommendations,
+    trackUserInteraction,
+    triggerTrain,
     getPopular,
     getSearchRecommendations,
     getSimilar,
