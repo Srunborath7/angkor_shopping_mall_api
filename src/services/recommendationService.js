@@ -90,8 +90,9 @@ async function getRecentUserInteractionProductIds(userId, limit = 15) {
 // ─────────────────────────────────────────────
 
 /**
- * DB-level personalization fallback based on user's interaction history (view & search).
- * Ensures User A (who viewed/searched A & B) gets only products matching categories/brands of A & B.
+ * DB-level personalization based on user's interaction history (view, search, cart, order).
+ * Ensures User A (e.g., Bora searching/viewing Apple) gets Apple products,
+ * while User B (e.g., Navy searching/viewing Banana) gets Banana products.
  */
 async function getUserPersonalizedProducts(userId, limit = 10) {
     if (!userId) return { products: [], source: 'no_user', user_interests: {} };
@@ -101,12 +102,12 @@ async function getUserPersonalizedProducts(userId, limit = 10) {
             attributes: [
                 'product_id',
                 'interaction_type',
-                [fn('SUM', col('weight')), 'total_weight'],
+                'weight',
+                'created_at',
             ],
             where: { user_id: userId },
-            group: ['product_id', 'interaction_type'],
-            order: [[literal('total_weight'), 'DESC']],
-            limit: 30,
+            order: [['created_at', 'DESC']],
+            limit: 50,
             raw: true,
         });
 
@@ -114,7 +115,15 @@ async function getUserPersonalizedProducts(userId, limit = 10) {
             return { products: [], source: 'no_history', user_interests: {} };
         }
 
-        const interactedProductIds = Array.from(new Set(userInteractions.map((r) => r.product_id)));
+        // Aggregate interaction weights per product
+        const productWeightMap = {};
+        userInteractions.forEach((row) => {
+            const pid = row.product_id;
+            const w = Number(row.weight) || 1;
+            productWeightMap[pid] = (productWeightMap[pid] || 0) + w;
+        });
+
+        const interactedProductIds = Object.keys(productWeightMap);
         const interactedProducts   = await Product.findAll({
             where: { id: interactedProductIds },
             include: [
@@ -123,62 +132,117 @@ async function getUserPersonalizedProducts(userId, limit = 10) {
             ],
         });
 
+        if (!interactedProducts.length) {
+            return { products: [], source: 'no_history', user_interests: {} };
+        }
+
+        // Common stop words to ignore during keyword extraction
+        const STOP_WORDS = new Set([
+            'and', 'the', 'for', 'with', 'men', 'mens', 'women', 'womens',
+            'pro', 'max', 'air', 'mini', 'plus', 'ultra', 'new', 'best',
+            'set', 'pack', 'size', 'color', 'black', 'white', 'red', 'blue',
+            'fresh', 'harvest', 'organic', 'crispy', 'golden', 'classic', 'yellow',
+            'item', 'test', 'brand', 'product', 'quality', 'unisex', 'adult'
+        ]);
+
         const categoryCounts = {};
         const categoryNames  = {};
         const brandCounts    = {};
         const brandNames     = {};
+        const keywordWeights = {};
 
         interactedProducts.forEach((p) => {
+            const pWeight = productWeightMap[p.id] || 1;
+
             if (p.category_id) {
-                categoryCounts[p.category_id] = (categoryCounts[p.category_id] || 0) + 1;
+                categoryCounts[p.category_id] = (categoryCounts[p.category_id] || 0) + pWeight;
                 if (p.category) categoryNames[p.category_id] = p.category.name;
             }
             if (p.brand_id) {
-                brandCounts[p.brand_id] = (brandCounts[p.brand_id] || 0) + 1;
+                brandCounts[p.brand_id] = (brandCounts[p.brand_id] || 0) + pWeight;
                 if (p.brand) brandNames[p.brand_id] = p.brand.name;
             }
+
+            // Extract keywords from product name, brand name, and category name
+            const fullText = `${p.name || ''} ${p.brand?.name || ''} ${p.category?.name || ''}`.toLowerCase();
+            const words = fullText.split(/[^a-z0-9]+/i).filter((w) => w.length >= 3 && !STOP_WORDS.has(w));
+
+            words.forEach((w) => {
+                keywordWeights[w] = (keywordWeights[w] || 0) + pWeight;
+            });
         });
 
         const topCategories = Object.keys(categoryCounts).sort((a, b) => categoryCounts[b] - categoryCounts[a]);
         const topBrands     = Object.keys(brandCounts).sort((a, b) => brandCounts[b] - brandCounts[a]);
+        const topKeywords   = Object.keys(keywordWeights).sort((a, b) => keywordWeights[b] - keywordWeights[a]).slice(0, 10);
 
-        if (!topCategories.length && !topBrands.length) {
-            return { products: [], source: 'no_preference', user_interests: {} };
-        }
-
-        const matchedProducts = await Product.findAll({
-            where: {
-                is_active: true,
-                [Op.or]: [
-                    ...(topCategories.length ? [{ category_id: { [Op.in]: topCategories } }] : []),
-                    ...(topBrands.length     ? [{ brand_id:    { [Op.in]: topBrands } }] : []),
-                ],
-            },
+        // Fetch all candidate products
+        const candidateProducts = await Product.findAll({
+            where: { is_active: true },
             include: PRODUCT_INCLUDE,
             order: [['created_at', 'DESC']],
-            limit: limit * 3,
+            limit: 100,
         });
 
         const topCatSet   = new Set(topCategories);
         const topBrandSet = new Set(topBrands);
+        const interactedSet = new Set(interactedProductIds);
 
-        const scored = matchedProducts.map((p) => {
+        const scored = candidateProducts.map((p) => {
             let score = 0;
-            let reason = 'Recommended for you';
+            let matchedKeyword = null;
+            let matchedBrand = null;
+            let matchedCat = null;
 
-            if (topCatSet.has(p.category_id)) {
-                score += 5;
-                const catName = categoryNames[p.category_id] || 'your liked categories';
-                reason = `Suggested based on your search & view of ${catName}`;
-            }
-            if (topBrandSet.has(p.brand_id)) {
-                score += 3;
-                const bName = brandNames[p.brand_id] || 'your liked brands';
-                if (score > 5) {
-                    reason += ` & ${bName}`;
-                } else {
-                    reason = `Suggested based on your interest in ${bName}`;
+            const pNameLower = (p.name || '').toLowerCase();
+            const pDescLower = (p.description || '').toLowerCase();
+            const pBrandLower = (p.brand?.name || '').toLowerCase();
+            const pCatLower   = (p.category?.name || '').toLowerCase();
+
+            // 1. Keyword match (highest priority for user intent, e.g. "apple", "banana", "nike")
+            topKeywords.forEach((kw) => {
+                if (pNameLower.includes(kw)) {
+                    score += 25 * (keywordWeights[kw] || 1);
+                    if (!matchedKeyword || !pNameLower.includes(matchedKeyword)) matchedKeyword = kw;
+                } else if (pBrandLower.includes(kw)) {
+                    score += 20 * (keywordWeights[kw] || 1);
+                    if (!matchedKeyword) matchedKeyword = kw;
+                } else if (pDescLower.includes(kw) || pCatLower.includes(kw)) {
+                    score += 10 * (keywordWeights[kw] || 1);
+                    if (!matchedKeyword) matchedKeyword = kw;
                 }
+            });
+
+            // 2. Brand match
+            if (topBrandSet.has(p.brand_id)) {
+                score += 15 * (brandCounts[p.brand_id] || 1);
+                if (!matchedBrand && p.brand) matchedBrand = p.brand.name;
+            }
+
+            // 3. Category match
+            if (topCatSet.has(p.category_id)) {
+                score += 8 * (categoryCounts[p.category_id] || 1);
+                if (!matchedCat && p.category) matchedCat = p.category.name;
+            }
+
+            // 4. Direct interaction bonus
+            if (interactedSet.has(p.id)) {
+                score += 12;
+            }
+
+            const displayKw = matchedKeyword
+                ? matchedKeyword.charAt(0).toUpperCase() + matchedKeyword.slice(1)
+                : null;
+
+            let reason = 'Recommended for you';
+            if (displayKw && (pNameLower.includes(matchedKeyword) || pBrandLower.includes(matchedKeyword))) {
+                reason = `Suggested for you based on your interest in ${displayKw}`;
+            } else if (matchedBrand) {
+                reason = `Suggested based on your interest in ${matchedBrand}`;
+            } else if (matchedCat) {
+                reason = `Suggested based on your search & views in ${matchedCat}`;
+            } else if (displayKw) {
+                reason = `Suggested based on your search for "${displayKw}"`;
             }
 
             const pObj = p.toJSON ? p.toJSON() : p;
@@ -186,15 +250,27 @@ async function getUserPersonalizedProducts(userId, limit = 10) {
             return { product: pObj, score };
         });
 
-        scored.sort((a, b) => b.score - a.score);
-        const resultProducts = scored.map((s) => s.product).slice(0, limit);
+        // Filter candidates that match user's interests (score > 0)
+        const matched = scored.filter((s) => s.score > 0);
+        matched.sort((a, b) => b.score - a.score);
+
+        const resultProducts = matched.map((s) => s.product).slice(0, limit);
 
         const userInterests = {
+            top_keywords:   topKeywords.map((k) => k.charAt(0).toUpperCase() + k.slice(1)),
             top_categories: topCategories.map((id) => categoryNames[id]).filter(Boolean),
             top_brands:     topBrands.map((id) => brandNames[id]).filter(Boolean),
         };
 
-        return { products: resultProducts, source: 'user_history_personalized', user_interests: userInterests };
+        if (resultProducts.length > 0) {
+            return {
+                products: resultProducts,
+                source: 'user_history_personalized',
+                user_interests: userInterests
+            };
+        }
+
+        return { products: [], source: 'no_match', user_interests: userInterests };
     } catch (err) {
         console.error('[getUserPersonalizedProducts] Error:', err.message);
         return { products: [], source: 'error', user_interests: {} };
