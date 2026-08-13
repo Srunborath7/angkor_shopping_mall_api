@@ -403,25 +403,81 @@ async function getSimilarProducts(productId, limit = 8) {
 }
 
 async function getSameCategoryProducts(productId, limit = 8) {
-    const source = await Product.findByPk(productId, { attributes: ['id', 'category_id'] });
+    const source = await Product.findByPk(productId, { attributes: ['id', 'category_id', 'brand_id'] });
     if (!source) return [];
 
-    const products = await Product.findAll({
-        where: {
-            is_active:   true,
-            category_id: source.category_id,
-            id:          { [Op.ne]: productId },
-        },
-        include: PRODUCT_INCLUDE,
-        order:   [['created_at', 'DESC']],
-        limit,
-    });
+    const existingIds = new Set([productId]);
+    const results = [];
 
-    return products.map((p) => {
-        const pObj = p.toJSON ? p.toJSON() : p;
-        pObj.recommendation_reason = 'More items in this category';
-        return pObj;
-    });
+    // 1. Same category
+    if (source.category_id) {
+        const catProducts = await Product.findAll({
+            where: {
+                is_active: true,
+                category_id: source.category_id,
+                id: { [Op.ne]: productId },
+            },
+            include: PRODUCT_INCLUDE,
+            order: [['created_at', 'DESC']],
+            limit,
+        });
+
+        catProducts.forEach((p) => {
+            if (!existingIds.has(p.id)) {
+                existingIds.add(p.id);
+                const pObj = p.toJSON ? p.toJSON() : p;
+                pObj.recommendation_reason = 'More items in this category';
+                results.push(pObj);
+            }
+        });
+    }
+
+    // 2. Same brand fallback if results < limit
+    if (results.length < limit && source.brand_id) {
+        const brandProducts = await Product.findAll({
+            where: {
+                is_active: true,
+                brand_id: source.brand_id,
+                id: { [Op.notIn]: Array.from(existingIds) },
+            },
+            include: PRODUCT_INCLUDE,
+            order: [['created_at', 'DESC']],
+            limit: limit - results.length,
+        });
+
+        brandProducts.forEach((p) => {
+            if (!existingIds.has(p.id)) {
+                existingIds.add(p.id);
+                const pObj = p.toJSON ? p.toJSON() : p;
+                pObj.recommendation_reason = 'More items from this brand';
+                results.push(pObj);
+            }
+        });
+    }
+
+    // 3. General popular fallback if results < limit
+    if (results.length < limit) {
+        const popular = await Product.findAll({
+            where: {
+                is_active: true,
+                id: { [Op.notIn]: Array.from(existingIds) },
+            },
+            include: PRODUCT_INCLUDE,
+            order: [['created_at', 'DESC']],
+            limit: limit - results.length,
+        });
+
+        popular.forEach((p) => {
+            if (!existingIds.has(p.id)) {
+                existingIds.add(p.id);
+                const pObj = p.toJSON ? p.toJSON() : p;
+                pObj.recommendation_reason = 'Recommended for you';
+                results.push(pObj);
+            }
+        });
+    }
+
+    return results.slice(0, limit);
 }
 
 // ─────────────────────────────────────────────

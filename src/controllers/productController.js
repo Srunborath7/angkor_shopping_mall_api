@@ -3,6 +3,7 @@ const { Category, Brand, Product, ProductImage } = require("../models/relationsh
 const { uploadFile, deleteFile } = require("../utils/uploadToSupabase");
 const { successResponse, errorResponse } = require("../utils/response");
 const { trackInteraction, trackInteractionBulk } = require("../utils/trackInteraction");
+const { getSimilarProducts } = require("../services/recommendationService");
 
 class ProductController {
 
@@ -120,9 +121,18 @@ class ProductController {
         try {
             const product = await productService.findOne(req.params.id);
 
-            // Track view interaction for authenticated users (fire-and-forget)
+            // Track view interaction for authenticated users (fire-and-forget for AI ML engine)
             if (req.user?.id) {
                 trackInteraction(req.user.id, req.params.id, 'view');
+            }
+
+            // Fetch Facebook-style AI similar recommendations for this clicked product
+            try {
+                const aiSimilarProducts = await getSimilarProducts(req.params.id, 6);
+                product.ai_similar_products = aiSimilarProducts || [];
+            } catch (simErr) {
+                console.warn("[productController] Failed to fetch AI similar products:", simErr.message);
+                product.ai_similar_products = [];
             }
 
             return successResponse(
