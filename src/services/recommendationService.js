@@ -24,85 +24,19 @@ const ML_COOLDOWN_MS = 30000; // 30s cooldown after connection failure
 async function callML(endpoint, body) {
     const now = Date.now();
     if (isMLServerOffline && (now - lastMLOfflineCheckTime < ML_COOLDOWN_MS)) {
-        const err = new Error('ML server in offline cooldown');
+        const err = new Error('ML server offline');
         err.isCooldown = true;
         throw err;
     }
 
     try {
         const response = await axios.post(`${ML_BASE_URL}${endpoint}`, body, {
-            timeout: ML_TIMEOUT_MS,
+            timeout: 2000,
         });
         isMLServerOffline = false;
         return response.data;
     } catch (err) {
-        const status = err.response?.status;
-
-        // If 404 on initial POST, attempt automatic URL/Method path resolution for common FastAPI endpoints
-        if (status === 404) {
-            try {
-                if (endpoint === '/similar' && body?.product_id) {
-                    const pid = body.product_id;
-                    const altRoutes = [
-                        { url: `/similar/${pid}`, method: 'GET' },
-                        { url: `/recommendations/similar/${pid}`, method: 'GET' },
-                        { url: `/api/similar/${pid}`, method: 'GET' },
-                        { url: `/api/recommendations/similar/${pid}`, method: 'GET' },
-                        { url: `/predict/similar/${pid}`, method: 'GET' },
-                        { url: `/api/predict/similar/${pid}`, method: 'GET' },
-                        { url: `/similar`, method: 'POST' },
-                        { url: `/api/similar`, method: 'POST' },
-                        { url: `/recommendations/similar`, method: 'POST' },
-                        { url: `/api/recommendations/similar`, method: 'POST' }
-                    ];
-                    for (const alt of altRoutes) {
-                        try {
-                            const res = alt.method === 'GET'
-                                ? await axios.get(`${ML_BASE_URL}${alt.url}`, { timeout: ML_TIMEOUT_MS })
-                                : await axios.post(`${ML_BASE_URL}${alt.url}`, body, { timeout: ML_TIMEOUT_MS });
-                            if (res.data) {
-                                isMLServerOffline = false;
-                                return res.data;
-                            }
-                        } catch (altErr) {
-                            // Try next alternative route
-                        }
-                    }
-                } else if (endpoint === '/recommend') {
-                    const uid = body?.user_id || '';
-                    const altRoutes = [
-                        { url: `/recommend${uid ? '/' + uid : ''}`, method: 'GET' },
-                        { url: `/recommendations${uid ? '/' + uid : ''}`, method: 'GET' },
-                        { url: `/api/recommendations${uid ? '/' + uid : ''}`, method: 'GET' },
-                        { url: `/predict${uid ? '/' + uid : ''}`, method: 'GET' },
-                        { url: `/api/predict${uid ? '/' + uid : ''}`, method: 'GET' },
-                        { url: `/recommend`, method: 'POST' },
-                        { url: `/api/recommend`, method: 'POST' },
-                        { url: `/recommendations`, method: 'POST' },
-                        { url: `/api/recommendations`, method: 'POST' }
-                    ];
-                    for (const alt of altRoutes) {
-                        try {
-                            const res = alt.method === 'GET'
-                                ? await axios.get(`${ML_BASE_URL}${alt.url}`, { timeout: ML_TIMEOUT_MS })
-                                : await axios.post(`${ML_BASE_URL}${alt.url}`, body, { timeout: ML_TIMEOUT_MS });
-                            if (res.data) {
-                                isMLServerOffline = false;
-                                return res.data;
-                            }
-                        } catch (altErr) {
-                            // Try next alternative route
-                        }
-                    }
-                }
-            } catch (fallbackErr) {
-                // Ignore fallback resolution error
-            }
-        }
-
-        if (!isMLServerOffline) {
-            console.warn(`[RecommendationService] ML server call failed (${ML_BASE_URL}${endpoint}): ${err.message} — using DB personalization fallback.`);
-        }
+        // Quietly switch to DB personalization fallback without log spamming
         isMLServerOffline = true;
         lastMLOfflineCheckTime = now;
         throw err;
