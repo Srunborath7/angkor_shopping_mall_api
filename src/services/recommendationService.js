@@ -17,16 +17,38 @@ const ML_TIMEOUT_MS = 8000;
 // ML Server helpers
 // ─────────────────────────────────────────────
 
+let isMLServerOffline = false;
+let lastMLOfflineCheckTime = 0;
+const ML_COOLDOWN_MS = 30000; // 30s cooldown after connection failure
+
 async function callML(endpoint, body) {
-    const response = await axios.post(`${ML_BASE_URL}${endpoint}`, body, {
-        timeout: ML_TIMEOUT_MS,
-    });
-    return response.data;
+    const now = Date.now();
+    if (isMLServerOffline && (now - lastMLOfflineCheckTime < ML_COOLDOWN_MS)) {
+        const err = new Error('ML server in offline cooldown');
+        err.isCooldown = true;
+        throw err;
+    }
+
+    try {
+        const response = await axios.post(`${ML_BASE_URL}${endpoint}`, body, {
+            timeout: ML_TIMEOUT_MS,
+        });
+        isMLServerOffline = false;
+        return response.data;
+    } catch (err) {
+        if (!isMLServerOffline) {
+            console.warn(`[RecommendationService] ML server offline (${ML_BASE_URL}) — using DB personalization fallback. (${err.message})`);
+        }
+        isMLServerOffline = true;
+        lastMLOfflineCheckTime = now;
+        throw err;
+    }
 }
 
 async function isMLHealthy() {
     try {
         const res = await axios.get(`${ML_BASE_URL}/health`, { timeout: 3000 });
+        isMLServerOffline = false;
         return res.data?.status === 'ok';
     } catch {
         return false;
@@ -38,7 +60,9 @@ async function triggerMLTraining() {
         const data = await callML('/train', {});
         return { success: true, data };
     } catch (err) {
-        console.error('[RecommendationService] Trigger training failed:', err.message);
+        if (!err.isCooldown) {
+            console.error('[RecommendationService] Trigger training failed:', err.message);
+        }
         return { success: false, message: err.message };
     }
 }
@@ -314,7 +338,9 @@ async function getMLRecommendations(userId, limit = 10) {
             }
         }
     } catch (err) {
-        console.warn('[RecommendationService] ML server call failed:', err.message);
+        if (!err.isCooldown) {
+            console.warn('[RecommendationService] ML server call failed:', err.message);
+        }
     }
 
     // Fallback 1: User-centric history personalization
@@ -397,7 +423,9 @@ async function getSimilarProducts(productId, limit = 8) {
             return pObj;
         });
     } catch (err) {
-        console.warn('[RecommendationService] Similar-products ML call failed:', err.message);
+        if (!err.isCooldown) {
+            console.warn('[RecommendationService] Similar-products ML call failed:', err.message);
+        }
         return getSameCategoryProducts(productId, limit);
     }
 }
