@@ -1,5 +1,6 @@
 const { CartItem, Product, ProductVariant, Category, Brand, FlashSale } = require('../models/relationships');
 const { successResponse, errorResponse } = require('../utils/response');
+const { trackInteraction } = require('../utils/trackInteraction');
 
 class CartController {
     async getCart(req, res) {
@@ -120,6 +121,9 @@ class CartController {
                     attributes: attributes || {}
                 });
             }
+
+            // Track cart interaction for AI personalization
+            trackInteraction(userId, product_id, 'cart');
 
             return successResponse(res, 'Product added to cart successfully', cartItem);
         } catch (error) {

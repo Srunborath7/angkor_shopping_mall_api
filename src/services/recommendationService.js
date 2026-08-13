@@ -3,12 +3,13 @@
  *
  * Service layer for all recommendation logic.
  * Handles ML server communication with graceful fallback to DB-level
- * popularity when the Python ML service is unavailable.
+ * user-centric interest personalization when the Python ML service is unavailable or warming up.
  */
 
 const axios = require('axios');
 const { Op, fn, col, literal } = require('sequelize');
 const { Product, ProductImage, Category, Brand, UserProductInteraction } = require('../models/relationships');
+const { trackInteractionBulk } = require('../utils/trackInteraction');
 
 const ML_BASE_URL = process.env.ML_SERVICE_URL || 'http://127.0.0.1:8001';
 const ML_TIMEOUT_MS = 8000;
@@ -57,30 +58,126 @@ async function hydrateProducts(productIds) {
 }
 
 // ─────────────────────────────────────────────
-// 1. Personalised ML recommendations
+// User-Centric DB Personalisation Fallback
+// ─────────────────────────────────────────────
+
+/**
+ * DB-level personalization fallback based on user's interaction history.
+ * Used when the user is new to the ML model matrix or when the ML service is offline.
+ */
+async function getUserPersonalizedProducts(userId, limit = 10) {
+    if (!userId) return { products: [], source: 'no_user' };
+
+    try {
+        // Get products the user has previously interacted with
+        const userInteractions = await UserProductInteraction.findAll({
+            attributes: [
+                'product_id',
+                [fn('SUM', col('weight')), 'total_weight'],
+            ],
+            where: { user_id: userId },
+            group: ['product_id'],
+            order: [[literal('total_weight'), 'DESC']],
+            limit: 25,
+            raw: true,
+        });
+
+        if (!userInteractions.length) {
+            return { products: [], source: 'no_history' };
+        }
+
+        const interactedProductIds = userInteractions.map((r) => r.product_id);
+        const interactedProducts   = await Product.findAll({
+            where: { id: interactedProductIds },
+            attributes: ['id', 'category_id', 'brand_id'],
+            raw: true,
+        });
+
+        const categoryCounts = {};
+        const brandCounts    = {};
+
+        interactedProducts.forEach((p) => {
+            if (p.category_id) {
+                categoryCounts[p.category_id] = (categoryCounts[p.category_id] || 0) + 1;
+            }
+            if (p.brand_id) {
+                brandCounts[p.brand_id] = (brandCounts[p.brand_id] || 0) + 1;
+            }
+        });
+
+        const topCategories = Object.keys(categoryCounts).sort((a, b) => categoryCounts[b] - categoryCounts[a]);
+        const topBrands     = Object.keys(brandCounts).sort((a, b) => brandCounts[b] - brandCounts[a]);
+
+        if (!topCategories.length && !topBrands.length) {
+            return { products: [], source: 'no_preference' };
+        }
+
+        // Find products matching user's top categories or brands
+        const matchedProducts = await Product.findAll({
+            where: {
+                is_active: true,
+                [Op.or]: [
+                    ...(topCategories.length ? [{ category_id: { [Op.in]: topCategories } }] : []),
+                    ...(topBrands.length     ? [{ brand_id:    { [Op.in]: topBrands } }] : []),
+                ],
+            },
+            include: PRODUCT_INCLUDE,
+            order: [['created_at', 'DESC']],
+            limit: limit * 2,
+        });
+
+        const topCatSet   = new Set(topCategories);
+        const topBrandSet = new Set(topBrands);
+
+        const scored = matchedProducts.map((p) => {
+            let score = 0;
+            if (topCatSet.has(p.category_id)) score += 3;
+            if (topBrandSet.has(p.brand_id)) score += 2;
+            return { product: p, score };
+        });
+
+        scored.sort((a, b) => b.score - a.score);
+        const resultProducts = scored.map((s) => s.product).slice(0, limit);
+
+        return { products: resultProducts, source: 'user_history_personalized' };
+    } catch (err) {
+        console.error('[getUserPersonalizedProducts] Error:', err.message);
+        return { products: [], source: 'error' };
+    }
+}
+
+// ─────────────────────────────────────────────
+// 1. Personalised recommendations (ML + DB Fallback)
 // ─────────────────────────────────────────────
 
 /**
  * Fetch ML-ranked recommendations for a user.
- * Returns { products, source } where source is 'ml' or 'popular'.
+ * Falls back to user-centric DB history, then to overall popular products.
  */
 async function getMLRecommendations(userId, limit = 10) {
     try {
         const data = await callML('/recommend', { user_id: String(userId), count: limit });
 
-        if (data.unknown_user || !data.recommendations?.length) {
-            // User has no training history — fall back to popular
-            return { products: [], source: 'unknown_user' };
+        if (!data.unknown_user && data.recommendations?.length) {
+            const productIds = data.recommendations.map((r) => r.product_id);
+            const products   = await hydrateProducts(productIds);
+            if (products.length > 0) {
+                return { products, source: 'ml', scores: data.recommendations };
+            }
         }
-
-        const productIds = data.recommendations.map((r) => r.product_id);
-        const products   = await hydrateProducts(productIds);
-
-        return { products, source: 'ml', scores: data.recommendations };
     } catch (err) {
         console.warn('[RecommendationService] ML server unavailable:', err.message);
-        return { products: [], source: 'error' };
     }
+
+    // Fallback 1: User-centric history personalization
+    const personalized = await getUserPersonalizedProducts(userId, limit);
+    if (personalized.products.length > 0) {
+        return personalized;
+    }
+
+    // Fallback 2: Global popular products
+    const popular = await getPopularProducts(limit);
+    return { products: popular, source: 'popular' };
 }
 
 // ─────────────────────────────────────────────
@@ -92,7 +189,6 @@ async function getMLRecommendations(userId, limit = 10) {
  * Works even when the ML service is offline.
  */
 async function getPopularProducts(limit = 10) {
-    // Aggregate interaction weights per product
     const topRows = await UserProductInteraction.findAll({
         attributes: [
             'product_id',
@@ -100,14 +196,13 @@ async function getPopularProducts(limit = 10) {
         ],
         group:  ['product_id'],
         order:  [[literal('total_weight'), 'DESC']],
-        limit:  limit * 2, // fetch extra in case some are inactive
+        limit:  limit * 2,
         raw:    true,
     });
 
     const productIds = topRows.map((r) => r.product_id);
 
     if (!productIds.length) {
-        // No interaction data yet — return newest products
         return getNewestProducts(limit);
     }
 
@@ -177,19 +272,21 @@ async function getSameCategoryProducts(productId, limit = 8) {
 
 /**
  * AI-enhanced search suggestions.
- * Returns matching categories, brands, direct product matches (ranked by popularity),
- * and AI-suggested related models/products based on ML embeddings.
+ * Returns matching categories, brands, product models, and AI-suggested related items.
+ * Tracks search interactions when userId is supplied for personalized profile building.
  */
-async function getSearchSuggestions(query, limit = 10) {
+async function getSearchSuggestions(query, limit = 10, userId = null) {
     const trimmed = query?.trim() || '';
     if (!trimmed) {
         return {
-            source: 'search',
-            query: '',
-            categories: [],
-            brands: [],
-            products: [],
-            ai_suggestions: [],
+            source:            'search',
+            query:             '',
+            categories:        [],
+            brands:            [],
+            products:          [],
+            models:            [],
+            ai_suggestions:    [],
+            user_personalized: Boolean(userId),
         };
     }
 
@@ -226,6 +323,12 @@ async function getSearchSuggestions(query, limit = 10) {
         limit:   limit * 2,
     });
 
+    // Track search interaction if user is logged in
+    if (userId && products.length > 0) {
+        const matchedProductIds = products.map((p) => p.id);
+        trackInteractionBulk(userId, matchedProductIds, 'search');
+    }
+
     // Extract categories/brands from found products if not already matched
     const categoryMap = new Map(categories.map((c) => [c.id, c.toJSON ? c.toJSON() : c]));
     const brandMap    = new Map(brands.map((b) => [b.id, b.toJSON ? b.toJSON() : b]));
@@ -259,7 +362,17 @@ async function getSearchSuggestions(query, limit = 10) {
             .slice(0, limit);
     }
 
-    // 4. AI-suggested related models via ML cosine similarity or category matching
+    // Extract product model names (Facebook-style model suggestions)
+    const models = sortedProducts.map((p) => ({
+        id:          p.id,
+        name:        p.name,
+        price:       p.price,
+        category:    p.category?.name || null,
+        brand:       p.brand?.name || null,
+        primary_img: p.images?.find((img) => img.is_primary)?.image_url || p.image_url || null,
+    }));
+
+    // 4. AI-suggested related items via ML cosine similarity or category matching
     let ai_suggestions = [];
     const directMatchedIds = new Set(sortedProducts.map((p) => p.id));
 
@@ -294,17 +407,20 @@ async function getSearchSuggestions(query, limit = 10) {
     }
 
     return {
-        source:         'ai_enhanced_search',
-        query:          trimmed,
-        categories:     Array.from(categoryMap.values()).slice(0, 5),
-        brands:         Array.from(brandMap.values()).slice(0, 5),
-        products:       sortedProducts,
-        ai_suggestions: ai_suggestions.slice(0, 8),
+        source:            'ai_enhanced_search',
+        query:             trimmed,
+        categories:        Array.from(categoryMap.values()).slice(0, 5),
+        brands:            Array.from(brandMap.values()).slice(0, 5),
+        models:            models.slice(0, 8),
+        products:          sortedProducts,
+        ai_suggestions:    ai_suggestions.slice(0, 8),
+        user_personalized: Boolean(userId),
     };
 }
 
 module.exports = {
     getMLRecommendations,
+    getUserPersonalizedProducts,
     getPopularProducts,
     getSimilarProducts,
     getSearchSuggestions,

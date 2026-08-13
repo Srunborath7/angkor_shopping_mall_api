@@ -69,18 +69,19 @@ async function getPopular(req, res) {
 
 // ─────────────────────────────────────────────
 // GET /api/recommendations/search?q=keyword
-// No auth needed. Combines text search with AI suggestions, categories & brands.
+// Optional auth. Combines text search with AI suggestions, categories, brands, and personalized tracking.
 // ─────────────────────────────────────────────
 async function getSearchRecommendations(req, res) {
     try {
-        const query = req.query.q || req.query.query || '';
-        const limit = Math.min(parseInt(req.query.limit) || 10, 50);
+        const query  = req.query.q || req.query.query || '';
+        const limit  = Math.min(parseInt(req.query.limit) || 10, 50);
+        const userId = req.user?.id || null;
 
         if (!query.trim()) {
             return errorResponse(res, 'Search query (q) is required', 400);
         }
 
-        const suggestions = await getSearchSuggestions(query, limit);
+        const suggestions = await getSearchSuggestions(query, limit, userId);
 
         return successResponse(res, 'Search suggestions fetched successfully', suggestions);
     } catch (error) {

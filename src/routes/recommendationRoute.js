@@ -1,7 +1,8 @@
 const express = require('express');
 const router  = express.Router();
 
-const auth = require('../middlewares/auth');
+const auth         = require('../middlewares/auth');
+const optionalAuth = require('../middlewares/optionalAuth');
 const {
     getRecommendations,
     getPopular,
@@ -25,10 +26,10 @@ router.get('/popular', getPopular);
 
 /**
  * GET /api/recommendations/search?q=keyword
- * Text-match + popularity-boosted product suggestions — public.
+ * Text-match + AI search suggestions with optional auth for personalization — public/optionalAuth.
  * Query params: ?q=iphone&limit=10
  */
-router.get('/search', getSearchRecommendations);
+router.get('/search', optionalAuth, getSearchRecommendations);
 
 /**
  * GET /api/recommendations/similar/:productId
