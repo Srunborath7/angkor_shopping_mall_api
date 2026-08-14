@@ -17,6 +17,9 @@ const PurchaseOrder = require('./purchaseOrderModel');
 const PurchaseOrderItem = require('./purchaseOrderItemModel');
 const FlashSale = require('./flashSaleModel');
 const UserProductInteraction = require('./userProductInteractionModel');
+const TradeProduct = require('./tradeProductModel');
+const TradeProductImage = require('./tradeProductImageModel');
+const TradeOffer = require('./tradeOfferModel');
 // User & Role Associations
 User.belongsToMany(Role, {
     through: UserRole,
@@ -54,6 +57,7 @@ addAuditAssociations(Brand);
 addAuditAssociations(Product);
 addAuditAssociations(Supplier);
 addAuditAssociations(PurchaseOrder);
+addAuditAssociations(TradeProduct);
 
 // Product Associations
 Product.belongsTo(Category, { foreignKey: 'category_id', as: 'category' });
@@ -145,6 +149,34 @@ UserProductInteraction.belongsTo(Product, {
     foreignKey: 'product_id',
     as: 'product',
 });
+
+// Trade Product Associations
+User.hasMany(TradeProduct, { foreignKey: 'user_id', as: 'tradeProducts', onDelete: 'CASCADE' });
+TradeProduct.belongsTo(User, { foreignKey: 'user_id', as: 'owner' });
+
+TradeProduct.belongsTo(Category, { foreignKey: 'category_id', as: 'category' });
+Category.hasMany(TradeProduct, { foreignKey: 'category_id', as: 'tradeProducts' });
+
+TradeProduct.belongsTo(Category, { foreignKey: 'target_category_id', as: 'targetCategory' });
+
+TradeProduct.belongsTo(Brand, { foreignKey: 'brand_id', as: 'brand' });
+Brand.hasMany(TradeProduct, { foreignKey: 'brand_id', as: 'tradeProducts' });
+
+TradeProduct.hasMany(TradeProductImage, { foreignKey: 'trade_product_id', as: 'images', onDelete: 'CASCADE' });
+TradeProductImage.belongsTo(TradeProduct, { foreignKey: 'trade_product_id', as: 'tradeProduct' });
+
+// Trade Offer Associations
+TradeProduct.hasMany(TradeOffer, { foreignKey: 'trade_product_id', as: 'offers', onDelete: 'CASCADE' });
+TradeOffer.belongsTo(TradeProduct, { foreignKey: 'trade_product_id', as: 'tradeProduct' });
+
+TradeOffer.belongsTo(TradeProduct, { foreignKey: 'offered_product_id', as: 'offeredProduct' });
+
+User.hasMany(TradeOffer, { foreignKey: 'sender_id', as: 'sentTradeOffers', onDelete: 'CASCADE' });
+TradeOffer.belongsTo(User, { foreignKey: 'sender_id', as: 'sender' });
+
+User.hasMany(TradeOffer, { foreignKey: 'receiver_id', as: 'receivedTradeOffers', onDelete: 'CASCADE' });
+TradeOffer.belongsTo(User, { foreignKey: 'receiver_id', as: 'receiver' });
+
 module.exports = {
     User,
     Role,
@@ -164,5 +196,8 @@ module.exports = {
     PurchaseOrder,
     PurchaseOrderItem,
     FlashSale,
-    UserProductInteraction
+    UserProductInteraction,
+    TradeProduct,
+    TradeProductImage,
+    TradeOffer
 };

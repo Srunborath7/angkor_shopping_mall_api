@@ -57,6 +57,8 @@ const productReviewRoutes = require("./routes/productReviewRoute");
 const supplierRoutes = require("./routes/supplierRoute");
 const purchaseOrderRoutes = require("./routes/purchaseOrderRoute");
 const flashSaleRoutes = require("./routes/flashSaleRoute");
+const tradeProductRoutes = require("./routes/tradeProductRoute");
+const tradeOfferRoutes = require("./routes/tradeOfferRoute");
 
 
 // ========================================
@@ -102,6 +104,8 @@ app.use("/api/orders", orderRoutes);
 app.use("/api/recommendations", recommendationRoutes);
 app.use("/api/suppliers", supplierRoutes);
 app.use("/api/purchase-orders", purchaseOrderRoutes);
+app.use("/api/trade-products", tradeProductRoutes);
+app.use("/api/trade-offers", tradeOfferRoutes);
 
 app.use("/api", productVariantRoutes);
 app.use("/api", productDetailRoutes);
