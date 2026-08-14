@@ -11,6 +11,8 @@ router.put("/:id",  auth, upload.single('image'), productController.update);
 router.delete("/:id", auth, productController.delete);
 
 // Public routes — optionalAuth so logged-in users get interaction tracking
+router.get("/best-sellers", optionalAuth, productController.getBestSellers);
+router.get("/trending", optionalAuth, productController.getBestSellers);
 router.get("/",       optionalAuth, productController.findAll);
 router.get("/true",   optionalAuth, productController.findAllTrue);
 router.get("/:id",    optionalAuth, productController.findOne);

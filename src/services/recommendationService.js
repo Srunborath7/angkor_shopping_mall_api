@@ -1,3 +1,4 @@
+const productService = require('./productService');
 /**
  * recommendationService.js
  *
@@ -383,6 +384,10 @@ function strOrNull(val) {
 // ─────────────────────────────────────────────
 
 async function getPopularProducts(limit = 10) {
+    try {
+        const bestSellers = await productService.getBestSellers(limit);
+        if (bestSellers && bestSellers.length > 0) return bestSellers;
+    } catch (e) { console.warn("[RecommendationService] getBestSellers error:", e.message); }
     const cutoff = getActiveRetentionCutoff();
     const topRows = await UserProductInteraction.findAll({
         attributes: [

@@ -162,7 +162,27 @@ async function getSimilar(req, res) {
     }
 }
 
+
+// ─────────────────────────────────────────────
+// GET /api/recommendations/best-sellers
+// ─────────────────────────────────────────────
+async function getBestSellers(req, res) {
+    try {
+        const limit = Math.min(parseInt(req.query.limit) || 10, 50);
+        const products = await getPopularProducts(limit);
+
+        return successResponse(res, 'Top best-selling products from order history fetched successfully', {
+            source: 'order_history_best_sellers',
+            products,
+        });
+    } catch (error) {
+        console.error('[recommendationController] getBestSellers:', error.message);
+        return errorResponse(res, 'Failed to fetch best selling products', 500);
+    }
+}
+
 module.exports = {
+    getBestSellers,
     getRecommendations,
     trackUserInteraction,
     triggerTrain,

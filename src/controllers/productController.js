@@ -384,6 +384,21 @@ class ProductController {
         }
     }
 
+
+    async getBestSellers(req, res) {
+        try {
+            const limit = Math.min(parseInt(req.query.limit) || 10, 50);
+            const products = await productService.getBestSellers(limit);
+            return successResponse(res, "Top best-selling products fetched successfully", {
+                source: "order_history_best_sellers",
+                total: products.length,
+                products
+            });
+        } catch (error) {
+            return errorResponse(res, error.message);
+        }
+    }
+
 }
 
 module.exports = new ProductController();

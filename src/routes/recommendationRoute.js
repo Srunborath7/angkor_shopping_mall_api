@@ -8,6 +8,7 @@ const {
     trackUserInteraction,
     triggerTrain,
     getPopular,
+    getBestSellers,
     getSearchRecommendations,
     getSimilar,
 } = require('../controllers/recommendationController');
@@ -36,6 +37,8 @@ router.post('/train', auth, triggerTrain);
  * Globally trending products — public.
  */
 router.get('/popular', getPopular);
+router.get('/best-sellers', optionalAuth, getBestSellers);
+router.get('/trending', optionalAuth, getBestSellers);
 
 /**
  * GET /api/recommendations/search?q=keyword
