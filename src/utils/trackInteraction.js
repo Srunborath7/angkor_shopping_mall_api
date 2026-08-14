@@ -11,6 +11,7 @@
  *   order  = 5  (user ordered this product)
  */
 
+const { Op } = require('sequelize');
 const UserProductInteraction = require('../models/userProductInteractionModel');
 
 const INTERACTION_WEIGHTS = {
@@ -42,6 +43,7 @@ async function trackInteraction(userId, productId, type) {
             product_id:       productId,
             interaction_type: type,
             weight,
+            created_at:       new Date(),
         });
     } catch (err) {
         // Log but never block the main request
@@ -62,11 +64,13 @@ async function trackInteractionBulk(userId, productIds, type) {
     const weight = INTERACTION_WEIGHTS[type];
     if (!weight) return;
 
+    const now = new Date();
     const records = productIds.map((productId) => ({
         user_id:          userId,
         product_id:       productId,
         interaction_type: type,
         weight,
+        created_at:       now,
     }));
 
     try {
@@ -76,4 +80,36 @@ async function trackInteractionBulk(userId, productIds, type) {
     }
 }
 
-module.exports = { trackInteraction, trackInteractionBulk };
+/**
+ * Automatically cleans up user interaction records older than the specified retention window (default: 2 days / 48 hours).
+ *
+ * @param {number} days - Number of days to retain (default: 2)
+ * @returns {Promise<number>} - Count of deleted records
+ */
+async function cleanupOldInteractions(days = 2) {
+    try {
+        const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+        const deletedCount = await UserProductInteraction.destroy({
+            where: {
+                created_at: {
+                    [Op.lt]: cutoffDate,
+                },
+            },
+        });
+
+        if (deletedCount > 0) {
+            console.log(`[Recommendation Cleanup] Purged ${deletedCount} interaction record(s) older than ${days} days (${cutoffDate.toISOString()}).`);
+        }
+        return deletedCount;
+    } catch (err) {
+        console.error('[Recommendation Cleanup] Error deleting old interaction records:', err.message);
+        return 0;
+    }
+}
+
+module.exports = { 
+    trackInteraction, 
+    trackInteractionBulk, 
+    cleanupOldInteractions 
+};
+

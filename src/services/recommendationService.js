@@ -8,10 +8,18 @@
 const axios = require('axios');
 const { Op, fn, col, literal } = require('sequelize');
 const { Product, ProductImage, Category, Brand, UserProductInteraction } = require('../models/relationships');
-const { trackInteractionBulk } = require('../utils/trackInteraction');
+const { trackInteractionBulk, cleanupOldInteractions } = require('../utils/trackInteraction');
 
 const ML_BASE_URL = process.env.ML_SERVICE_URL || 'http://127.0.0.1:8001';
 const ML_TIMEOUT_MS = 8000;
+const RECOMMENDATION_RETENTION_DAYS = 2; // Store & consider interactions for 2 days
+
+/**
+ * Returns cutoff timestamp for 2-day active retention window
+ */
+function getActiveRetentionCutoff(days = RECOMMENDATION_RETENTION_DAYS) {
+    return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+}
 
 // ─────────────────────────────────────────────
 // ML Server helpers
@@ -19,27 +27,30 @@ const ML_TIMEOUT_MS = 8000;
 
 let isMLServerOffline = false;
 let lastMLOfflineCheckTime = 0;
-const ML_COOLDOWN_MS = 30000; // 30s cooldown after connection failure
+const ML_COOLDOWN_MS = 60000; // 60s cooldown before retrying Python ML server
 
 async function callML(endpoint, body) {
     const now = Date.now();
     if (isMLServerOffline && (now - lastMLOfflineCheckTime < ML_COOLDOWN_MS)) {
-        const err = new Error('ML server offline');
-        err.isCooldown = true;
-        throw err;
+        return null; // Silent DB fallback during cooldown
     }
 
     try {
         const response = await axios.post(`${ML_BASE_URL}${endpoint}`, body, {
-            timeout: 2000,
+            timeout: ML_TIMEOUT_MS,
         });
+        if (isMLServerOffline) {
+            console.log(`[RecommendationService] Python ML server at ${ML_BASE_URL} is now ONLINE.`);
+        }
         isMLServerOffline = false;
         return response.data;
     } catch (err) {
-        // Quietly switch to DB personalization fallback without log spamming
+        if (!isMLServerOffline) {
+            console.log(`[RecommendationService] Note: Python ML server (${ML_BASE_URL}) not running or returned ${err.response?.status || err.code || err.message} — using built-in database personalization engine.`);
+        }
         isMLServerOffline = true;
         lastMLOfflineCheckTime = now;
-        throw err;
+        return null;
     }
 }
 
@@ -88,14 +99,18 @@ async function hydrateProducts(productIds) {
 }
 
 /**
- * Fetch product IDs recently searched or viewed by user
+ * Fetch product IDs recently searched or viewed by user within the 2-day retention window
  */
 async function getRecentUserInteractionProductIds(userId, limit = 15) {
     if (!userId) return [];
     try {
+        const cutoff = getActiveRetentionCutoff();
         const rows = await UserProductInteraction.findAll({
             attributes: ['product_id'],
-            where: { user_id: userId },
+            where: { 
+                user_id: userId,
+                created_at: { [Op.gte]: cutoff }
+            },
             order: [['created_at', 'DESC']],
             limit,
             raw: true,
@@ -108,11 +123,11 @@ async function getRecentUserInteractionProductIds(userId, limit = 15) {
 }
 
 // ─────────────────────────────────────────────
-// User-Centric DB Personalisation Fallback
+// User-Centric DB Personalisation Fallback (2-Day Window)
 // ─────────────────────────────────────────────
 
 /**
- * DB-level personalization based on user's interaction history (view, search, cart, order).
+ * DB-level personalization based on user's interaction history (view, search, cart, order) in the last 2 days.
  * Ensures User A (e.g., Bora searching/viewing Apple) gets Apple products,
  * while User B (e.g., Navy searching/viewing Banana) gets Banana products.
  */
@@ -120,6 +135,7 @@ async function getUserPersonalizedProducts(userId, limit = 10) {
     if (!userId) return { products: [], source: 'no_user', user_interests: {} };
 
     try {
+        const cutoff = getActiveRetentionCutoff();
         const userInteractions = await UserProductInteraction.findAll({
             attributes: [
                 'product_id',
@@ -127,7 +143,10 @@ async function getUserPersonalizedProducts(userId, limit = 10) {
                 'weight',
                 'created_at',
             ],
-            where: { user_id: userId },
+            where: { 
+                user_id: userId,
+                created_at: { [Op.gte]: cutoff }
+            },
             order: [['created_at', 'DESC']],
             limit: 50,
             raw: true,
@@ -317,7 +336,7 @@ async function getMLRecommendations(userId, limit = 10) {
             recent_product_ids: recentPids,
         });
 
-        if (!data.unknown_user && data.recommendations?.length) {
+        if (data && !data.unknown_user && data.recommendations?.length) {
             const productIds = data.recommendations.map((r) => r.product_id);
             const scoreMap   = new Map(data.recommendations.map((r) => [r.product_id, r.score]));
             const products   = await hydrateProducts(productIds);
@@ -336,9 +355,7 @@ async function getMLRecommendations(userId, limit = 10) {
             }
         }
     } catch (err) {
-        if (!err.isCooldown) {
-            console.warn('[RecommendationService] ML server call failed:', err.message);
-        }
+        // Handled via DB fallback
     }
 
     // Fallback 1: User-centric history personalization
@@ -361,11 +378,15 @@ function strOrNull(val) {
 // ─────────────────────────────────────────────
 
 async function getPopularProducts(limit = 10) {
+    const cutoff = getActiveRetentionCutoff();
     const topRows = await UserProductInteraction.findAll({
         attributes: [
             'product_id',
             [fn('SUM', col('weight')), 'total_weight'],
         ],
+        where: {
+            created_at: { [Op.gte]: cutoff },
+        },
         group:  ['product_id'],
         order:  [[literal('total_weight'), 'DESC']],
         limit:  limit * 2,
@@ -381,7 +402,7 @@ async function getPopularProducts(limit = 10) {
     const products = await hydrateProducts(productIds);
     return products.slice(0, limit).map((p) => {
         const pObj = p.toJSON ? p.toJSON() : p;
-        pObj.recommendation_reason = 'Popular item trending on Angkor Mall';
+        pObj.recommendation_reason = 'Popular item trending on Angkor Mall (last 48h)';
         return pObj;
     });
 }
@@ -409,23 +430,20 @@ async function getSimilarProducts(productId, limit = 8) {
     try {
         const data = await callML('/similar', { product_id: String(productId), count: limit });
 
-        if (!data.similar?.length) {
-            return getSameCategoryProducts(productId, limit);
+        if (data && data.similar?.length) {
+            const productIds = data.similar.map((r) => r.product_id);
+            const products   = await hydrateProducts(productIds);
+            return products.map((p) => {
+                const pObj = p.toJSON ? p.toJSON() : p;
+                pObj.recommendation_reason = 'Similar item matching this product';
+                return pObj;
+            });
         }
-
-        const productIds = data.similar.map((r) => r.product_id);
-        const products   = await hydrateProducts(productIds);
-        return products.map((p) => {
-            const pObj = p.toJSON ? p.toJSON() : p;
-            pObj.recommendation_reason = 'Similar item matching this product';
-            return pObj;
-        });
     } catch (err) {
-        if (!err.isCooldown) {
-            console.warn('[RecommendationService] Similar-products ML call failed:', err.message);
-        }
-        return getSameCategoryProducts(productId, limit);
+        // Handled via DB fallback
     }
+
+    return getSameCategoryProducts(productId, limit);
 }
 
 async function getSameCategoryProducts(productId, limit = 8) {
@@ -574,10 +592,14 @@ async function getSearchSuggestions(query, limit = 10, userId = null) {
 
     let sortedProducts = products;
     if (products.length > 0) {
+        const cutoff = getActiveRetentionCutoff();
         const productIds = products.map((p) => p.id);
         const weightRows = await UserProductInteraction.findAll({
             attributes: ['product_id', [fn('SUM', col('weight')), 'total_weight']],
-            where:  { product_id: productIds },
+            where:  { 
+                product_id: productIds,
+                created_at: { [Op.gte]: cutoff }
+            },
             group:  ['product_id'],
             raw:    true,
         });
@@ -644,6 +666,33 @@ async function getSearchSuggestions(query, limit = 10, userId = null) {
     };
 }
 
+/**
+ * Starts a recurring background job to automatically purge interaction records older than 2 days.
+ *
+ * @param {number} intervalMinutes - Frequency to run the auto-cleanup job (default: 60 minutes)
+ * @param {number} retentionDays - Number of days to retain interaction records (default: 2 days)
+ */
+function startRecommendationCleanupJob(intervalMinutes = 60, retentionDays = RECOMMENDATION_RETENTION_DAYS) {
+    // Run cleanup immediately on server boot
+    cleanupOldInteractions(retentionDays).catch((err) => {
+        console.error('[Auto-Cleanup] Initial run error:', err.message);
+    });
+
+    // Schedule periodic run
+    const intervalMs = intervalMinutes * 60 * 1000;
+    const timer = setInterval(() => {
+        cleanupOldInteractions(retentionDays).catch((err) => {
+            console.error('[Auto-Cleanup] Interval run error:', err.message);
+        });
+    }, intervalMs);
+
+    // Allow node process to exit cleanly if needed
+    if (timer.unref) timer.unref();
+
+    console.log(`[Recommendation Engine] Auto-cleanup scheduled every ${intervalMinutes} minute(s) with ${retentionDays}-day retention policy.`);
+    return timer;
+}
+
 module.exports = {
     getMLRecommendations,
     getUserPersonalizedProducts,
@@ -652,4 +701,6 @@ module.exports = {
     getSearchSuggestions,
     isMLHealthy,
     triggerMLTraining,
+    cleanupOldInteractions,
+    startRecommendationCleanupJob,
 };
