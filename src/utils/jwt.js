@@ -1,8 +1,9 @@
 const jwt = require('jsonwebtoken');
 
-const ACCESS_SECRET = process.env.ACCESS_SECRET || 'access_secret';
-const REFRESH_SECRET = process.env.REFRESH_SECRET || 'refresh_secret';
+const ACCESS_SECRET = process.env.JWT_SECRET || process.env.ACCESS_SECRET || 'access_secret';
+const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || process.env.REFRESH_SECRET || 'refresh_secret';
 const RESET_SECRET = process.env.RESET_SECRET || 'reset_secret';
+
 
 const generateAccessToken = (user) => {
     return jwt.sign(
