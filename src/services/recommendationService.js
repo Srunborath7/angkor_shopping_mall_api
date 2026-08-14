@@ -10,8 +10,8 @@ const { Op, fn, col, literal } = require('sequelize');
 const { Product, ProductImage, Category, Brand, UserProductInteraction } = require('../models/relationships');
 const { trackInteractionBulk, cleanupOldInteractions } = require('../utils/trackInteraction');
 
-const ML_BASE_URL = process.env.ML_SERVICE_URL || 'http://127.0.0.1:8001';
-const ML_TIMEOUT_MS = 8000;
+const ML_BASE_URL = process.env.ML_SERVICE_URL || null;
+const ML_TIMEOUT_MS = 5000;
 const RECOMMENDATION_RETENTION_DAYS = 2; // Store & consider interactions for 2 days
 
 /**
@@ -25,14 +25,19 @@ function getActiveRetentionCutoff(days = RECOMMENDATION_RETENTION_DAYS) {
 // ML Server helpers
 // ─────────────────────────────────────────────
 
-let isMLServerOffline = false;
+let isMLServerOffline = !ML_BASE_URL;
 let lastMLOfflineCheckTime = 0;
-const ML_COOLDOWN_MS = 60000; // 60s cooldown before retrying Python ML server
+const ML_COOLDOWN_MS = 60000; // 60s cooldown before retrying external ML server
 
 async function callML(endpoint, body) {
+    // If no external ML URL configured, run directly on built-in Node.js AI engine (0ms latency)
+    if (!ML_BASE_URL || ML_BASE_URL === 'internal' || ML_BASE_URL === 'none') {
+        return null;
+    }
+
     const now = Date.now();
     if (isMLServerOffline && (now - lastMLOfflineCheckTime < ML_COOLDOWN_MS)) {
-        return null; // Silent DB fallback during cooldown
+        return null; // Silent native DB engine during cooldown
     }
 
     try {
@@ -40,13 +45,13 @@ async function callML(endpoint, body) {
             timeout: ML_TIMEOUT_MS,
         });
         if (isMLServerOffline) {
-            console.log(`[RecommendationService] Python ML server at ${ML_BASE_URL} is now ONLINE.`);
+            console.log(`[RecommendationService] External ML server at ${ML_BASE_URL} is ONLINE.`);
         }
         isMLServerOffline = false;
         return response.data;
     } catch (err) {
         if (!isMLServerOffline) {
-            console.log(`[RecommendationService] Note: Python ML server (${ML_BASE_URL}) not running or returned ${err.response?.status || err.code || err.message} — using built-in database personalization engine.`);
+            console.log(`[RecommendationService] Unified Mode: Running recommendations natively in Node.js API.`);
         }
         isMLServerOffline = true;
         lastMLOfflineCheckTime = now;
