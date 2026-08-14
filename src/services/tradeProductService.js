@@ -5,17 +5,161 @@ const {
     TradeOffer, 
     User, 
     Category, 
-    Brand 
+    Brand,
+    Order,
+    OrderItem,
+    Product,
+    ProductVariant,
+    ProductImage
 } = require('../models/relationships');
 const { uploadFile, deleteFile } = require('../utils/uploadToSupabase');
 
 class TradeProductService {
+
+    /**
+     * Fetch items that the user purchased in paid/shipped/completed orders,
+     * showing whether each item is already listed or available for trade.
+     */
+    async getEligibleOrderedItems(userId) {
+        const orders = await Order.findAll({
+            where: {
+                user_id: userId,
+                status: { [Op.in]: ['paid', 'shipped', 'completed'] }
+            },
+            include: [
+                {
+                    model: OrderItem,
+                    as: 'items',
+                    include: [
+                        {
+                            model: Product,
+                            as: 'product',
+                            include: [
+                                { model: Category, as: 'category', attributes: ['id', 'name'] },
+                                { model: Brand, as: 'brand', attributes: ['id', 'name'] },
+                                { model: ProductImage, as: 'images', attributes: ['id', 'image_url', 'is_primary'] }
+                            ]
+                        },
+                        {
+                            model: ProductVariant,
+                            as: 'variant',
+                            attributes: ['id', 'sku', 'price', 'attributes']
+                        },
+                        {
+                            model: TradeProduct,
+                            as: 'tradeProduct',
+                            attributes: ['id', 'title', 'status', 'estimated_value', 'created_at']
+                        }
+                    ]
+                }
+            ],
+            order: [['created_at', 'DESC']]
+        });
+
+        const eligibleItems = [];
+
+        for (const order of orders) {
+            for (const item of (order.items || [])) {
+                const product = item.product;
+                const primaryImg = product?.images?.find(img => img.is_primary) || product?.images?.[0];
+                const isListed = !!(item.tradeProduct && item.tradeProduct.status !== 'cancelled');
+
+                eligibleItems.push({
+                    order_id: order.id,
+                    order_date: order.created_at,
+                    order_status: order.status,
+                    order_item_id: item.id,
+                    product_id: item.product_id,
+                    product_name: product?.name || 'Unknown Product',
+                    product_description: product?.description || '',
+                    category: product?.category || null,
+                    brand: product?.brand || null,
+                    variant: item.variant || null,
+                    attributes: item.attributes || {},
+                    purchase_price: item.price,
+                    quantity: item.quantity,
+                    image_url: primaryImg?.image_url || null,
+                    is_already_listed: isListed,
+                    trade_product: isListed ? item.tradeProduct : null
+                });
+            }
+        }
+
+        return eligibleItems;
+    }
 
     async create(userId, data, primaryFile = null, galleryFiles = []) {
         let primaryImage = null;
 
         if (primaryFile) {
             primaryImage = await uploadFile(primaryFile, 'trade-products');
+        }
+
+        let orderId = data.order_id || null;
+        let orderItemId = data.order_item_id || null;
+        let originalProductId = data.original_product_id || null;
+        let isStoreVerified = false;
+
+        // If listing is created from past order item, verify and enrich
+        if (orderItemId) {
+            const orderItem = await OrderItem.findByPk(orderItemId, {
+                include: [
+                    {
+                        model: Order,
+                        as: 'order'
+                    },
+                    {
+                        model: Product,
+                        as: 'product',
+                        include: [
+                            { model: Category, as: 'category' },
+                            { model: Brand, as: 'brand' },
+                            { model: ProductImage, as: 'images' }
+                        ]
+                    }
+                ]
+            });
+
+            if (!orderItem) {
+                throw new Error('Order item not found');
+            }
+
+            if (orderItem.order?.user_id !== userId) {
+                throw new Error('You can only list items from your own purchased orders');
+            }
+
+            const existingListing = await TradeProduct.findOne({
+                where: {
+                    order_item_id: orderItemId,
+                    status: { [Op.notIn]: ['cancelled'] }
+                }
+            });
+
+            if (existingListing) {
+                throw new Error('This purchased item has already been listed for trading');
+            }
+
+            orderId = orderItem.order_id;
+            originalProductId = orderItem.product_id;
+            isStoreVerified = true;
+
+            // Auto-populate missing fields from order & product
+            if (!data.title && orderItem.product?.name) {
+                data.title = orderItem.product.name;
+            }
+            if (!data.category_id && orderItem.product?.category_id) {
+                data.category_id = orderItem.product.category_id;
+            }
+            if (!data.brand_id && orderItem.product?.brand_id) {
+                data.brand_id = orderItem.product.brand_id;
+            }
+            if ((data.estimated_value === undefined || data.estimated_value === '' || data.estimated_value === null) && orderItem.price) {
+                data.estimated_value = orderItem.price;
+            }
+            if (!primaryImage && !data.image_url && orderItem.product?.images?.length > 0) {
+                const primaryProductImg = orderItem.product.images.find(img => img.is_primary) || orderItem.product.images[0];
+                data.image_url = primaryProductImg.image_url;
+            }
         }
 
         const tradeProduct = await TradeProduct.create({
@@ -34,6 +178,10 @@ class TradeProductService {
             status: data.status || 'available',
             image_url: primaryImage?.url || data.image_url || null,
             image_path: primaryImage?.path || data.image_path || null,
+            order_id: orderId,
+            order_item_id: orderItemId,
+            original_product_id: originalProductId,
+            is_store_verified: isStoreVerified,
             created_by: userId
         });
 
@@ -89,6 +237,7 @@ class TradeProductService {
             brand_id,
             condition,
             status,
+            is_store_verified,
             min_value,
             max_value,
             location,
@@ -118,11 +267,15 @@ class TradeProductService {
             where.condition = condition;
         }
 
+        if (is_store_verified !== undefined && is_store_verified !== '') {
+            where.is_store_verified = is_store_verified === 'true' || is_store_verified === true;
+        }
+
         if (location) {
             where.location = { [Op.iLike || Op.like]: `%${location}%` };
         }
 
-        if (min_value !== undefined && min_value !== '' || max_value !== undefined && max_value !== '') {
+        if ((min_value !== undefined && min_value !== '') || (max_value !== undefined && max_value !== '')) {
             where.estimated_value = {};
             if (min_value !== undefined && min_value !== '') {
                 where.estimated_value[Op.gte] = parseFloat(min_value);
@@ -183,6 +336,12 @@ class TradeProductService {
                     model: TradeProductImage,
                     as: 'images',
                     attributes: ['id', 'image_url', 'is_primary']
+                },
+                {
+                    model: Product,
+                    as: 'originalProduct',
+                    attributes: ['id', 'name', 'price'],
+                    required: false
                 }
             ],
             order,
@@ -227,6 +386,24 @@ class TradeProductService {
                     model: TradeProductImage,
                     as: 'images',
                     attributes: ['id', 'image_url', 'image_path', 'is_primary']
+                },
+                {
+                    model: Product,
+                    as: 'originalProduct',
+                    attributes: ['id', 'name', 'price', 'description'],
+                    required: false
+                },
+                {
+                    model: Order,
+                    as: 'sourceOrder',
+                    attributes: ['id', 'created_at', 'status'],
+                    required: false
+                },
+                {
+                    model: OrderItem,
+                    as: 'sourceOrderItem',
+                    attributes: ['id', 'price', 'quantity', 'attributes'],
+                    required: false
                 },
                 {
                     model: TradeOffer,
@@ -279,6 +456,18 @@ class TradeProductService {
                     model: TradeProductImage,
                     as: 'images',
                     attributes: ['id', 'image_url', 'is_primary']
+                },
+                {
+                    model: Product,
+                    as: 'originalProduct',
+                    attributes: ['id', 'name', 'price'],
+                    required: false
+                },
+                {
+                    model: Order,
+                    as: 'sourceOrder',
+                    attributes: ['id', 'status', 'created_at'],
+                    required: false
                 },
                 {
                     model: TradeOffer,

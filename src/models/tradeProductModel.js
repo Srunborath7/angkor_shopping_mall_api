@@ -78,6 +78,26 @@ const TradeProduct = sequelize.define('TradeProduct', {
     updated_by: {
         type: DataTypes.UUID,
         allowNull: true,
+    },
+    order_id: {
+        type: DataTypes.UUID,
+        allowNull: true,
+        comment: 'Optional link to the original store Order',
+    },
+    order_item_id: {
+        type: DataTypes.UUID,
+        allowNull: true,
+        comment: 'Optional link to the specific OrderItem purchased',
+    },
+    original_product_id: {
+        type: DataTypes.UUID,
+        allowNull: true,
+        comment: 'Optional link to the store Product catalog item',
+    },
+    is_store_verified: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: false,
+        comment: 'True if listed directly from a verified Angkor Shopping Mall completed order',
     }
 }, {
     tableName: 'trade_products',

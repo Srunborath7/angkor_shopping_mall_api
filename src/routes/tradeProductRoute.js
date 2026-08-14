@@ -8,6 +8,7 @@ const upload = require('../middlewares/upload');
 
 // User listings & offer submission — require auth
 router.get('/my', auth, tradeProductController.findMyListings);
+router.get('/eligible-ordered-items', auth, tradeProductController.getEligibleOrderedItems);
 
 router.post(
     '/',

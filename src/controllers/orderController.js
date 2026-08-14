@@ -1,4 +1,4 @@
-const { Order, OrderItem, CartItem, Product, ProductVariant, ProductImage, User, Category, Brand, FlashSale } = require('../models/relationships');
+const { Order, OrderItem, CartItem, Product, ProductVariant, ProductImage, User, Category, Brand, FlashSale, TradeProduct } = require('../models/relationships');
 const { successResponse, errorResponse } = require('../utils/response');
 const paymentService = require('../services/paymentService');
 const { bot } = require('../config/telegram');
@@ -27,11 +27,18 @@ const orderItemIncludes = () => [
     }
 ];
 
+const tradeInIncludes = () => ({
+    model: TradeProduct,
+    as: 'tradeInProduct',
+    attributes: ['id', 'title', 'condition', 'estimated_value', 'image_url', 'status'],
+    required: false
+});
+
 class OrderController {
     async checkout(req, res) {
         try {
             const userId = req.user.id;
-            const { shipping_address, contact_phone } = req.body;
+            const { shipping_address, contact_phone, trade_in_product_id } = req.body;
 
             if (!shipping_address || !contact_phone) {
                 return errorResponse(res, 'Shipping address and contact phone are required', 400);
@@ -57,7 +64,7 @@ class OrderController {
             }
 
             // 2. Validate stock and calculate total amount
-            let totalAmount = 0;
+            let subtotalAmount = 0;
             for (const item of cartItems) {
                 if (!item.product) {
                     return errorResponse(res, 'Product in cart no longer exists', 404);
@@ -85,13 +92,42 @@ class OrderController {
                     }
                 }
 
-                totalAmount += effectivePrice * item.quantity;
+                subtotalAmount += effectivePrice * item.quantity;
+            }
+
+            // 2.5 Handle optional Trade-In Product
+            let tradeInProduct = null;
+            let tradeInDiscount = 0.00;
+            let finalPayableAmount = subtotalAmount;
+
+            if (trade_in_product_id) {
+                tradeInProduct = await TradeProduct.findByPk(trade_in_product_id);
+                if (!tradeInProduct) {
+                    return errorResponse(res, 'Trade-in product not found', 404);
+                }
+                if (tradeInProduct.user_id !== userId) {
+                    return errorResponse(res, 'You can only use your own trade product for trade-in', 403);
+                }
+                if (tradeInProduct.status !== 'available') {
+                    return errorResponse(res, `Trade-in product is ${tradeInProduct.status} and cannot be used for trade-in`, 400);
+                }
+
+                const estimatedVal = parseFloat(tradeInProduct.estimated_value || 0);
+                tradeInDiscount = Math.min(subtotalAmount, estimatedVal);
+                finalPayableAmount = Math.max(0, subtotalAmount - tradeInDiscount);
+
+                // Reserve trade-in product
+                tradeInProduct.status = 'in_negotiation';
+                await tradeInProduct.save();
             }
 
             // 3. Create Order
             const order = await Order.create({
                 user_id: userId,
-                total_amount: totalAmount,
+                subtotal_amount: subtotalAmount,
+                trade_in_discount: tradeInDiscount,
+                trade_in_product_id: tradeInProduct ? tradeInProduct.id : null,
+                total_amount: finalPayableAmount,
                 status: 'pending',
                 shipping_address,
                 contact_phone
@@ -170,7 +206,8 @@ class OrderController {
                         model: OrderItem,
                         as: 'items',
                         include: orderItemIncludes()
-                    }
+                    },
+                    tradeInIncludes()
                 ],
                 order: [['created_at', 'DESC']]
             });
@@ -196,7 +233,8 @@ class OrderController {
                         model: User,
                         as: 'user',
                         attributes: ['id', 'name', 'email', 'phone']
-                    }
+                    },
+                    tradeInIncludes()
                 ]
             });
 
@@ -223,7 +261,8 @@ class OrderController {
                         model: User,
                         as: 'user',
                         attributes: ['id', 'name', 'email', 'phone']
-                    }
+                    },
+                    tradeInIncludes()
                 ],
                 order: [['created_at', 'DESC']]
             });
@@ -250,7 +289,8 @@ class OrderController {
                         model: User,
                         as: 'user',
                         attributes: ['id', 'name', 'email', 'phone', 'telegram_chat_id']
-                    }
+                    },
+                    tradeInIncludes()
                 ]
             });
 
@@ -279,6 +319,22 @@ class OrderController {
                             });
                         }
                     }
+
+                    // Release trade-in product back to available if order cancelled
+                    if (order.trade_in_product_id) {
+                        await TradeProduct.update(
+                            { status: 'available' },
+                            { where: { id: order.trade_in_product_id } }
+                        );
+                    }
+                }
+
+                // If paid or completed, mark trade-in product as traded
+                if ((status === 'paid' || status === 'completed') && order.trade_in_product_id) {
+                    await TradeProduct.update(
+                        { status: 'traded' },
+                        { where: { id: order.trade_in_product_id } }
+                    );
                 }
 
                 order.status = status;
@@ -311,6 +367,13 @@ class OrderController {
             const order = await Order.findByPk(id);
             if (!order) {
                 return errorResponse(res, 'Order not found', 404);
+            }
+            // Release trade-in item if any
+            if (order.trade_in_product_id) {
+                await TradeProduct.update(
+                    { status: 'available' },
+                    { where: { id: order.trade_in_product_id } }
+                );
             }
             await order.destroy();
             return successResponse(res, 'Order deleted successfully');
@@ -345,6 +408,8 @@ class OrderController {
 
             const order = await Order.create({
                 user_id,
+                subtotal_amount: totalAmount,
+                trade_in_discount: 0.00,
                 total_amount: totalAmount,
                 status,
                 shipping_address,
@@ -385,7 +450,8 @@ class OrderController {
             const updatedOrder = await Order.findByPk(order.id, {
                 include: [
                     { model: OrderItem, as: 'items', include: orderItemIncludes() },
-                    { model: User, as: 'user', attributes: ['id', 'name', 'email', 'phone'] }
+                    { model: User, as: 'user', attributes: ['id', 'name', 'email', 'phone'] },
+                    tradeInIncludes()
                 ]
             });
 
@@ -415,6 +481,14 @@ class OrderController {
                 order.payment_intent_id = payment_intent;
             }
             await order.save();
+
+            // If trade-in product was used, mark it as traded
+            if (order.trade_in_product_id) {
+                await TradeProduct.update(
+                    { status: 'traded' },
+                    { where: { id: order.trade_in_product_id } }
+                );
+            }
 
             // Fetch User details to check for Telegram Link
             const user = await User.findByPk(order.user_id);

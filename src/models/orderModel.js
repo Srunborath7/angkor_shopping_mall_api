@@ -15,6 +15,23 @@ const Order = sequelize.define('Order', {
         type: DataTypes.DECIMAL(10, 2),
         allowNull: false,
     },
+    subtotal_amount: {
+        type: DataTypes.DECIMAL(10, 2),
+        allowNull: true,
+        defaultValue: 0.00,
+        comment: 'Cart subtotal before discounts or trade-in deductions',
+    },
+    trade_in_discount: {
+        type: DataTypes.DECIMAL(10, 2),
+        allowNull: true,
+        defaultValue: 0.00,
+        comment: 'Discount applied from TradeProduct trade-in',
+    },
+    trade_in_product_id: {
+        type: DataTypes.UUID,
+        allowNull: true,
+        comment: 'Reference to TradeProduct applied for trade-in discount',
+    },
     status: {
         type: DataTypes.ENUM('pending', 'paid', 'failed', 'shipped', 'completed', 'cancelled'),
         defaultValue: 'pending',

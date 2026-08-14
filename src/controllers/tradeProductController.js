@@ -3,6 +3,24 @@ const { successResponse, errorResponse } = require('../utils/response');
 
 class TradeProductController {
 
+    async getEligibleOrderedItems(req, res) {
+        try {
+            const userId = req.user?.id;
+            if (!userId) {
+                return errorResponse(res, 'Authentication required', 401);
+            }
+
+            const items = await tradeProductService.getEligibleOrderedItems(userId);
+            return successResponse(
+                res,
+                'Eligible purchased items for trading retrieved successfully',
+                items
+            );
+        } catch (error) {
+            return errorResponse(res, error.message);
+        }
+    }
+
     async create(req, res) {
         try {
             const userId = req.user?.id;
@@ -46,6 +64,9 @@ class TradeProductController {
                 location: req.body.location,
                 phone_number: req.body.phone_number || req.user.phone,
                 status: req.body.status,
+                order_id: req.body.order_id,
+                order_item_id: req.body.order_item_id,
+                original_product_id: req.body.original_product_id,
                 image_url: req.body.image_url,
                 image_path: req.body.image_path,
                 images

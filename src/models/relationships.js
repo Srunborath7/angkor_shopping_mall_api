@@ -165,6 +165,20 @@ Brand.hasMany(TradeProduct, { foreignKey: 'brand_id', as: 'tradeProducts' });
 TradeProduct.hasMany(TradeProductImage, { foreignKey: 'trade_product_id', as: 'images', onDelete: 'CASCADE' });
 TradeProductImage.belongsTo(TradeProduct, { foreignKey: 'trade_product_id', as: 'tradeProduct' });
 
+// Trade Product ↔ Order & Store Product Associations (Listing from Order History)
+TradeProduct.belongsTo(Order, { foreignKey: 'order_id', as: 'sourceOrder' });
+Order.hasMany(TradeProduct, { foreignKey: 'order_id', as: 'listedTradeProducts' });
+
+TradeProduct.belongsTo(OrderItem, { foreignKey: 'order_item_id', as: 'sourceOrderItem' });
+OrderItem.hasOne(TradeProduct, { foreignKey: 'order_item_id', as: 'tradeProduct' });
+
+TradeProduct.belongsTo(Product, { foreignKey: 'original_product_id', as: 'originalProduct' });
+Product.hasMany(TradeProduct, { foreignKey: 'original_product_id', as: 'tradeListings' });
+
+// Order ↔ TradeProduct for Trade-In Discount
+Order.belongsTo(TradeProduct, { foreignKey: 'trade_in_product_id', as: 'tradeInProduct' });
+TradeProduct.hasOne(Order, { foreignKey: 'trade_in_product_id', as: 'appliedTradeInOrder' });
+
 // Trade Offer Associations
 TradeProduct.hasMany(TradeOffer, { foreignKey: 'trade_product_id', as: 'offers', onDelete: 'CASCADE' });
 TradeOffer.belongsTo(TradeProduct, { foreignKey: 'trade_product_id', as: 'tradeProduct' });
