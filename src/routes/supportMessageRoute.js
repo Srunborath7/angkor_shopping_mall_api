@@ -7,6 +7,7 @@ const supportMessageController = require('../controllers/supportMessageControlle
 // Public / User routes
 router.post('/send', optionalAuth, supportMessageController.sendMessage);
 router.get('/my-messages', auth, supportMessageController.getMyMessages);
+router.post('/track', supportMessageController.trackMessages);
 
 // Admin routes (requires auth)
 router.get('/messages', auth, supportMessageController.getMessages);

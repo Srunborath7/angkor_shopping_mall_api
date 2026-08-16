@@ -293,4 +293,43 @@ class SupportMessageController {
     }
 }
 
+
+    /**
+     * POST /api/support/track
+     * Track messages by IDs, email, or phone (accessible to guests and logged-in users)
+     */
+    async trackMessages(req, res) {
+        try {
+            const { ids, email, phone } = req.body;
+            const whereConditions = [];
+
+            if (Array.isArray(ids) && ids.length > 0) {
+                whereConditions.push({ id: { [Op.in]: ids } });
+            }
+            if (email && email.trim()) {
+                whereConditions.push({ sender_email: email.trim().toLowerCase() });
+            }
+            if (phone && phone.trim()) {
+                whereConditions.push({ sender_phone: phone.trim() });
+            }
+
+            if (whereConditions.length === 0) {
+                return successResponse(res, 'No tickets found', []);
+            }
+
+            const messages = await SupportMessage.findAll({
+                where: { [Op.or]: whereConditions },
+                order: [['created_at', 'DESC']],
+                limit: 20
+            });
+
+            return successResponse(res, 'Messages tracked successfully', messages);
+        } catch (error) {
+            console.error('[SupportMessageController] trackMessages error:', error);
+            return errorResponse(res, 'Failed to track messages', 500);
+        }
+    }
+
+}
+
 module.exports = new SupportMessageController();
