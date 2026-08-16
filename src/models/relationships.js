@@ -20,6 +20,7 @@ const UserProductInteraction = require('./userProductInteractionModel');
 const TradeProduct = require('./tradeProductModel');
 const TradeProductImage = require('./tradeProductImageModel');
 const TradeOffer = require('./tradeOfferModel');
+const SupportMessage = require('./supportMessageModel');
 // User & Role Associations
 User.belongsToMany(Role, {
     through: UserRole,
@@ -191,6 +192,14 @@ TradeOffer.belongsTo(User, { foreignKey: 'sender_id', as: 'sender' });
 User.hasMany(TradeOffer, { foreignKey: 'receiver_id', as: 'receivedTradeOffers', onDelete: 'CASCADE' });
 TradeOffer.belongsTo(User, { foreignKey: 'receiver_id', as: 'receiver' });
 
+
+// Support Message Associations
+User.hasMany(SupportMessage, { foreignKey: 'user_id', as: 'supportMessages', onDelete: 'CASCADE' });
+SupportMessage.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
+
+User.hasMany(SupportMessage, { foreignKey: 'admin_id', as: 'assignedMessages', onDelete: 'SET NULL' });
+SupportMessage.belongsTo(User, { foreignKey: 'admin_id', as: 'admin' });
+
 module.exports = {
     User,
     Role,
@@ -213,5 +222,6 @@ module.exports = {
     UserProductInteraction,
     TradeProduct,
     TradeProductImage,
-    TradeOffer
+    TradeOffer,
+    SupportMessage
 };

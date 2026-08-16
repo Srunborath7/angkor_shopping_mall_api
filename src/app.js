@@ -60,6 +60,7 @@ const flashSaleRoutes = require("./routes/flashSaleRoute");
 const tradeProductRoutes = require("./routes/tradeProductRoute");
 const tradeOfferRoutes = require("./routes/tradeOfferRoute");
 const chatbotRoutes = require("./routes/chatbotRoute");
+const supportRoutes = require("./routes/supportMessageRoute");
 
 
 // ========================================
@@ -108,6 +109,7 @@ app.use("/api/purchase-orders", purchaseOrderRoutes);
 app.use("/api/trade-products", tradeProductRoutes);
 app.use("/api/trade-offers", tradeOfferRoutes);
 app.use("/api/chatbot", chatbotRoutes);
+app.use("/api/support", supportRoutes);
 
 app.use("/api", productVariantRoutes);
 app.use("/api", productDetailRoutes);

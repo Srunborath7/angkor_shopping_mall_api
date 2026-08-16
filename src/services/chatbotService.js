@@ -1,4 +1,5 @@
 const { Op } = require("sequelize");
+const aiProviderService = require("./aiProviderService");
 const {
     Product,
     ProductVariant,
@@ -135,6 +136,30 @@ class ChatbotService {
             text.includes("open")
         ) {
             return this.handleStoreInfo();
+        }
+
+        
+        // Contact Admin / Human Agent intent
+        if (
+            text.includes("contact admin") ||
+            text.includes("message admin") ||
+            text.includes("talk to admin") ||
+            text.includes("human") ||
+            text.includes("agent") ||
+            text.includes("support team") ||
+            text.includes("real person") ||
+            text.includes("staff") ||
+            text.includes("leave message")
+        ) {
+            return {
+                replyText: "📞 **Connect with Angkor Mall Customer Support Team**\n\nWould you like to send a direct message or ticket to our store admin? Our support team will review your inquiry and reply promptly!\n\n• **Store Hotline**: +855 23 888 999 (8:00 AM - 9:00 PM)\n• **Email**: support@angkorshoppingmall.com\n• You can also click **'Send Message to Admin'** below to leave an instant message.",
+                actions: [
+                    { label: "✉️ Send Message to Admin", actionType: "contact_admin", icon: "HelpCircle" },
+                    { label: "📦 View My Orders", path: "/orders", icon: "Package" },
+                    { label: "🛍️ Browse Shop", path: "/shop", icon: "ShoppingBag" }
+                ],
+                suggestedPrompts: ["What are payment methods?", "How does shipping work?", "Show flash sales"]
+            };
         }
 
         // 10. Greetings & Small talk
