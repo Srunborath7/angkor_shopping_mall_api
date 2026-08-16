@@ -86,16 +86,17 @@ class SupportMessageController {
             const offset = (page - 1) * limit;
             const where = {};
 
-            if (status && status !== 'all') {
-                where.status = status;
+            if (status && status !== 'all' && status !== 'undefined' && status !== 'null' && status.trim() !== '') {
+                where.status = status.trim();
             }
 
-            if (search) {
+            if (search && search !== 'undefined' && search !== 'null' && search.trim() !== '') {
+                const s = search.trim();
                 where[Op.or] = [
-                    { sender_name: { [Op.iLike]: `%${search}%` } },
-                    { sender_email: { [Op.iLike]: `%${search}%` } },
-                    { subject: { [Op.iLike]: `%${search}%` } },
-                    { message: { [Op.iLike]: `%${search}%` } }
+                    { sender_name: { [Op.iLike]: `%${s}%` } },
+                    { sender_email: { [Op.iLike]: `%${s}%` } },
+                    { subject: { [Op.iLike]: `%${s}%` } },
+                    { message: { [Op.iLike]: `%${s}%` } }
                 ];
             }
 
@@ -105,7 +106,7 @@ class SupportMessageController {
                     {
                         model: User,
                         as: 'user',
-                        attributes: ['id', 'name', 'email', 'avatar']
+                        attributes: ['id', 'name', 'email', 'phone']
                     },
                     {
                         model: User,
@@ -142,7 +143,7 @@ class SupportMessageController {
             const { id } = req.params;
             const message = await SupportMessage.findByPk(id, {
                 include: [
-                    { model: User, as: 'user', attributes: ['id', 'name', 'email', 'avatar', 'created_at'] },
+                    { model: User, as: 'user', attributes: ['id', 'name', 'email', 'phone', 'created_at'] },
                     { model: User, as: 'admin', attributes: ['id', 'name', 'email'] }
                 ]
             });
