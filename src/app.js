@@ -62,11 +62,6 @@ const tradeOfferRoutes = require("./routes/tradeOfferRoute");
 const chatbotRoutes = require("./routes/chatbotRoute");
 const supportRoutes = require("./routes/supportMessageRoute");
 
-
-// ========================================
-// ROOT
-// ========================================
-
 app.get("/", (req, res) => {
     res.status(200).json({
         success: true,
