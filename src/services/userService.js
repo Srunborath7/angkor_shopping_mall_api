@@ -1,3 +1,4 @@
+const axios = require('axios');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { Op } = require('sequelize');
@@ -126,6 +127,110 @@ class UserService {
 
         return true;
     }
+    
+    async googleLogin(data) {
+        const { token, access_token } = data;
+        let googleEmail, googleName, googlePicture, googleSub;
+
+        if (token) {
+            try {
+                const response = await axios.get(`https://oauth2.googleapis.com/tokeninfo?id_token=${token}`);
+                googleEmail = response.data.email;
+                googleName = response.data.name || response.data.given_name || 'Google User';
+                googlePicture = response.data.picture;
+                googleSub = response.data.sub;
+            } catch (err) {
+                try {
+                    const { OAuth2Client } = require('google-auth-library');
+                    const client = new OAuth2Client();
+                    const ticket = await client.verifyIdToken({ idToken: token });
+                    const payload = ticket.getPayload();
+                    googleEmail = payload.email;
+                    googleName = payload.name || payload.given_name || 'Google User';
+                    googlePicture = payload.picture;
+                    googleSub = payload.sub;
+                } catch (verifyErr) {
+                    throw new Error('Invalid or expired Google token');
+                }
+            }
+        } else if (access_token) {
+            try {
+                const response = await axios.get('https://www.googleapis.com/oauth2/v3/userinfo', {
+                    headers: { Authorization: `Bearer ${access_token}` }
+                });
+                googleEmail = response.data.email;
+                googleName = response.data.name || response.data.given_name || 'Google User';
+                googlePicture = response.data.picture;
+                googleSub = response.data.sub;
+            } catch (err) {
+                throw new Error('Failed to fetch Google profile with access token');
+            }
+        } else {
+            throw new Error('Google token is required');
+        }
+
+        if (!googleEmail) {
+            throw new Error('Could not retrieve email from Google');
+        }
+
+        let user = await User.findOne({
+            where: { email: googleEmail },
+            include: [{
+                model: Role,
+                as: 'roles',
+                attributes: ['id', 'name'],
+                through: { attributes: [] }
+            }]
+        });
+
+        if (!user) {
+            const randomPassword = await bcrypt.hash(Math.random().toString(36) + Date.now(), 10);
+            const placeholderPhone = 'g_' + (googleSub ? googleSub.slice(-8) : Date.now().toString().slice(-8));
+
+            user = await User.create({
+                name: googleName,
+                email: googleEmail,
+                password: randomPassword,
+                phone: placeholderPhone,
+                is_active: true
+            });
+
+            const customerRole = await Role.findOne({ where: { name: 'customer' } });
+            if (customerRole) {
+                await user.addRole(customerRole);
+            }
+
+            user = await User.findByPk(user.id, {
+                include: [{
+                    model: Role,
+                    as: 'roles',
+                    attributes: ['id', 'name'],
+                    through: { attributes: [] }
+                }]
+            });
+        }
+
+        const accessToken = generateAccessToken(user);
+        const refreshToken = generateRefreshToken(user);
+
+        await RefreshToken.create({
+            user_id: user.id,
+            token: refreshToken,
+            expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+        });
+
+        return {
+            user: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                roles: user.roles
+            },
+            accessToken,
+            refreshToken
+        };
+    }
+
     async login(data) {
 
         const user = await User.findOne({

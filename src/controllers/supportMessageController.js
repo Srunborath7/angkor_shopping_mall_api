@@ -291,8 +291,6 @@ class SupportMessageController {
             return errorResponse(res, 'Failed to fetch support stats', 500);
         }
     }
-}
-
 
     /**
      * POST /api/support/track

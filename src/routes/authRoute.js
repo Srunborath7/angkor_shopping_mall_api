@@ -5,6 +5,7 @@ const userController = require('../controllers/userController');
 const auth = require('../middlewares/auth');
 
 router.post('/login', userController.login);
+router.post('/google', userController.googleLogin);
 router.post('/register', userController.create);
 router.post('/refresh-token', userController.refreshToken);
 router.post('/logout', userController.logout);

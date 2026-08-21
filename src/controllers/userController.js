@@ -91,6 +91,20 @@ class UserController {
         }
     }
 
+    
+    async googleLogin(req, res) {
+        try {
+            const result = await userService.googleLogin(req.body);
+            return successResponse(
+                res,
+                'Google login successful',
+                result
+            );
+        } catch (error) {
+            return errorResponse(res, error.message);
+        }
+    }
+
     async login(req, res) {
         try {
 
