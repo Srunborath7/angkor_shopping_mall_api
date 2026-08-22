@@ -11,6 +11,7 @@ const {
     FlashSale,
     Order,
     OrderItem,
+    User,
     TradeProduct
 } = require("../models/relationships");
 
@@ -18,748 +19,292 @@ class ChatbotService {
     /**
      * Primary conversation handler
      * @param {string} userMessage - text sent by user
-     * @param {object} options - { userId, context: { page, productId, categoryId } }
+     * @param {object} options - { userId, context: { page, productId, categoryId, lang } }
      */
     async processMessage(userMessage = "", options = {}) {
         const rawText = (userMessage || "").trim();
         const text = rawText.toLowerCase();
         const userId = options.userId || null;
         const pageContext = options.context || {};
+        const isKhmer = pageContext.lang === "km" || /[\u1780-\u17FF]/.test(rawText);
 
-        // Extract UUID if user entered a specific order id
-        const uuidRegex = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
-        const uuidMatch = rawText.match(uuidRegex);
-
-        // 1. Check for specific order ID query
-        if (uuidMatch) {
-            return await this.handleSpecificOrderLookup(uuidMatch[0]);
+        // 1. Fetch Customer Profile if logged in
+        let customer = null;
+        let customerName = null;
+        if (userId) {
+            try {
+                customer = await User.findByPk(userId, { attributes: ['id', 'name', 'email', 'phone'] });
+                customerName = customer?.name || null;
+            } catch (e) {}
         }
 
-        // 2. Check for Contextual queries (e.g. user is on a product page asking "is this in stock?" or "tell me about this product")
-        if (pageContext.productId && (text.includes("this") || text.includes("product") || text.includes("stock") || text.includes("price") || text.includes("warranty") || text.includes("detail") || text.includes("spec"))) {
-            const contextResponse = await this.handleProductContext(pageContext.productId, text);
-            if (contextResponse) return contextResponse;
+        // 2. Fetch Customer's Recent Orders for context
+        let recentOrders = [];
+        if (userId) {
+            try {
+                const orders = await Order.findAll({
+                    where: { user_id: userId },
+                    limit: 3,
+                    order: [['created_at', 'DESC']],
+                    include: [
+                        {
+                            model: OrderItem,
+                            as: 'items',
+                            include: [{ model: Product, as: 'product', attributes: ['id', 'name', 'price'] }]
+                        }
+                    ]
+                });
+                recentOrders = orders.map(o => ({
+                    id: `#ORD-${o.id.slice(0, 8).toUpperCase()}`,
+                    rawId: o.id,
+                    total: `$${parseFloat(o.total_amount).toFixed(2)}`,
+                    status: o.status,
+                    date: o.created_at
+                }));
+            } catch (e) {}
         }
 
-        // 3. Order Tracking / History intent
-        if (
-            text.includes("my order") ||
-            text.includes("track order") ||
-            text.includes("order status") ||
-            text.includes("where is my order") ||
-            text.includes("tracking") ||
-            text.includes("check order") ||
-            text.includes("my purchase") ||
-            text.includes("invoice")
-        ) {
-            return await this.handleOrderInquiry(userId, rawText);
-        }
-
-        // 4. Flash Sale & Deals intent
-        if (
-            text.includes("flash") ||
-            text.includes("deal") ||
-            text.includes("sale") ||
-            text.includes("discount") ||
-            text.includes("promo") ||
-            text.includes("offer") ||
-            text.includes("cheap") ||
-            text.includes("promotion")
-        ) {
-            return await this.handleFlashSales();
-        }
-
-        // 5. Trade-in intent
-        if (
-            text.includes("trade") ||
-            text.includes("exchange") ||
-            text.includes("swap") ||
-            text.includes("old phone") ||
-            text.includes("sell device") ||
-            text.includes("trade-in") ||
-            text.includes("valuation")
-        ) {
-            return await this.handleTradeInInquiry();
-        }
-
-        // 6. Payment & Checkout intent
-        if (
-            text.includes("pay") ||
-            text.includes("aba") ||
-            text.includes("khqr") ||
-            text.includes("bakong") ||
-            text.includes("wing") ||
-            text.includes("card") ||
-            text.includes("cash") ||
-            text.includes("cod") ||
-            text.includes("payment method")
-        ) {
-            return this.handlePaymentInfo();
-        }
-
-        // 7. Shipping & Delivery intent
-        if (
-            text.includes("ship") ||
-            text.includes("deliver") ||
-            text.includes("province") ||
-            text.includes("phnom penh") ||
-            text.includes("how long") ||
-            text.includes("delivery time") ||
-            text.includes("fee")
-        ) {
-            return this.handleShippingInfo();
-        }
-
-        // 8. Warranty & Return Policy intent
-        if (
-            text.includes("warranty") ||
-            text.includes("return") ||
-            text.includes("refund") ||
-            text.includes("replace") ||
-            text.includes("guarantee") ||
-            text.includes("broken") ||
-            text.includes("defective")
-        ) {
-            return this.handleWarrantyInfo();
-        }
-
-        // 9. Contact, Support & Store Location intent
-        if (
-            text.includes("contact") ||
-            text.includes("location") ||
-            text.includes("store") ||
-            text.includes("shop address") ||
-            text.includes("phone number") ||
-            text.includes("support") ||
-            text.includes("customer care") ||
-            text.includes("working hour") ||
-            text.includes("open")
-        ) {
-            return this.handleStoreInfo();
-        }
-
-        
-        // Contact Admin / Human Agent intent
-        if (
-            text.includes("contact admin") ||
-            text.includes("message admin") ||
-            text.includes("talk to admin") ||
-            text.includes("human") ||
-            text.includes("agent") ||
-            text.includes("support team") ||
-            text.includes("real person") ||
-            text.includes("staff") ||
-            text.includes("leave message")
-        ) {
-            return {
-                replyText: "📞 **Connect with Angkor Mall Customer Support Team**\n\nWould you like to send a direct message or ticket to our store admin? Our support team will review your inquiry and reply promptly!\n\n• **Store Hotline**: +855 23 888 999 (8:00 AM - 9:00 PM)\n• **Email**: support@angkorshoppingmall.com\n• You can also click **'Send Message to Admin'** below to leave an instant message.",
-                actions: [
-                    { label: "✉️ Send Message to Admin", actionType: "contact_admin", icon: "HelpCircle" },
-                    { label: "📦 View My Orders", path: "/orders", icon: "Package" },
-                    { label: "🛍️ Browse Shop", path: "/shop", icon: "ShoppingBag" }
-                ],
-                suggestedPrompts: ["What are payment methods?", "How does shipping work?", "Show flash sales"]
-            };
-        }
-
-        // 10. Greetings & Small talk
-        if (
-            text === "hi" ||
-            text === "hello" ||
-            text === "hey" ||
-            text.startsWith("hi ") ||
-            text.startsWith("hello ") ||
-            text.startsWith("hey ") ||
-            text.includes("good morning") ||
-            text.includes("good afternoon") ||
-            text.includes("good evening") ||
-            text.includes("sok sabay") ||
-            text.includes("chom reap sour") ||
-            text.includes("who are you") ||
-            text.includes("what can you do")
-        ) {
-            return this.handleGreeting();
-        }
-
-        // 11. Recommendations / Trending intent
-        if (
-            text.includes("recommend") ||
-            text.includes("suggest") ||
-            text.includes("popular") ||
-            text.includes("trending") ||
-            text.includes("best seller") ||
-            text.includes("top rated")
-        ) {
-            return await this.handleRecommendations();
-        }
-
-        // 12. Smart Product Search (Category, Brand, Price constraint, or keyword)
-        return await this.handleProductSearch(rawText);
-    }
-
-    /**
-     * Look up specific order by UUID
-     */
-    async handleSpecificOrderLookup(orderId) {
+        // 3. Search Matching Products in Database
+        let matchingProducts = [];
         try {
-            const order = await Order.findOne({
-                where: { id: orderId },
+            const searchWords = rawText.replace(/[^a-zA-Z0-9\u1780-\u17FF ]/g, '').split(' ').filter(w => w.length > 2);
+            let whereClause = { is_active: true };
+
+            if (searchWords.length > 0) {
+                whereClause[Op.or] = searchWords.map(w => ({
+                    name: { [Op.iLike]: `%${w}%` }
+                }));
+            }
+
+            const prods = await Product.findAll({
+                where: whereClause,
+                limit: 4,
                 include: [
-                    {
-                        model: OrderItem,
-                        as: "items",
-                        include: [
-                            {
-                                model: Product,
-                                as: "product",
-                                attributes: ["id", "name", "price"],
-                                include: [{ model: ProductImage, as: "images", attributes: ["image_url", "is_primary"] }]
-                            }
-                        ]
-                    }
+                    { model: ProductImage, as: 'images', attributes: ['image_url', 'is_primary'] },
+                    { model: Category, as: 'category', attributes: ['name'] },
+                    { model: Brand, as: 'brand', attributes: ['name'] },
+                    { model: FlashSale, as: 'flashSales', where: { status: 'active' }, required: false }
                 ]
             });
 
-            if (!order) {
+            matchingProducts = prods.map(p => this.formatProductCard(p));
+        } catch (e) {}
+
+        // 4. If AI (OpenAI / Gemini) is available, generate smart personalized response
+        if (aiProviderService.isAIAvailable()) {
+            try {
+                const storeContext = {
+                    customerName: customerName,
+                    customerEmail: customer?.email,
+                    language: pageContext.lang || (isKhmer ? 'km' : 'en'),
+                    page: pageContext.page,
+                    orders: recentOrders,
+                    products: matchingProducts.slice(0, 4)
+                };
+
+                const aiReply = await aiProviderService.generateChatbotAIResponse(rawText, storeContext);
+
+                if (aiReply) {
+                    return {
+                        replyText: aiReply,
+                        products: matchingProducts.length > 0 ? matchingProducts : [],
+                        orders: (text.includes('order') || text.includes('ទិញ') || text.includes('កាម៉ង់') || text.includes('status')) ? recentOrders : [],
+                        actions: this.getRecommendedActions(text, isKhmer)
+                    };
+                }
+            } catch (aiErr) {
+                console.warn('[ChatbotService] AI response fallback:', aiErr.message);
+            }
+        }
+
+        // 5. Intelligent Rule-Based Fallback (Polite, multilingual & personalized by Name)
+        return await this.handleSmartRuleBasedResponse(rawText, {
+            customerName,
+            isKhmer,
+            recentOrders,
+            matchingProducts,
+            pageContext,
+            userId
+        });
+    }
+
+    /**
+     * Fallback Intelligent Response Handler
+     */
+    async handleSmartRuleBasedResponse(rawText, { customerName, isKhmer, recentOrders, matchingProducts, pageContext, userId }) {
+        const text = rawText.toLowerCase();
+        const greetingName = customerName ? (isKhmer ? `បង ${customerName}` : customerName) : (isKhmer ? 'លោកអ្នក' : 'there');
+
+        // Order Inquiry
+        if (text.includes('order') || text.includes('track') || text.includes('កាម៉ង់') || text.includes('ទំនិញខ្ញុំ') || text.includes('status')) {
+            if (!userId) {
                 return {
-                    replyText: `🔍 I couldn't find an order matching ID **${orderId}**. Please double-check the order number or check your order history.`,
+                    replyText: isKhmer
+                        ? `👋 សួស្តី${greetingName}! ដើម្បីពិនិត្យមើល និងតាមដានការបញ្ជាទិញរបស់អ្នក សូមចូលគណនី (Sign in) ជាមុនសិន។`
+                        : `👋 Hello ${greetingName}! To view and track your orders, please sign in to your account.`,
                     actions: [
-                        { label: "View All Orders", path: "/orders", icon: "Package" },
-                        { label: "Browse Shop", path: "/shop", icon: "ShoppingBag" }
+                        { label: isKhmer ? "🔑 ចូលគណនី (Login)" : "🔑 Sign In", path: "/auth/login", icon: "UserIcon" },
+                        { label: isKhmer ? "🛍️ មើលទំនិញទាំងអស់" : "🛍️ Browse Shop", path: "/shop", icon: "ShoppingBag" }
                     ]
                 };
             }
 
-            const formattedOrder = this.formatOrderCard(order);
-            const statusMap = {
-                pending: "⏳ **Pending Payment** - Waiting for payment confirmation.",
-                paid: "✅ **Payment Confirmed** - Preparing your order for shipment.",
-                shipped: "🚚 **Shipped & On The Way** - Your order is en route.",
-                completed: "🎉 **Delivered** - Order successfully fulfilled.",
-                cancelled: "❌ **Cancelled** - This order has been cancelled.",
-                failed: "⚠️ **Payment Failed** - Please retry payment or contact support."
-            };
-
-            return {
-                replyText: `📦 **Order Status for #${order.id.slice(0, 8)}**\n\n${statusMap[order.status] || order.status}\n• **Total**: $${parseFloat(order.total_amount).toFixed(2)}\n• **Items**: ${order.items?.length || 0} item(s)\n• **Shipping To**: ${order.shipping_address}\n• **Phone**: ${order.contact_phone}`,
-                orders: [formattedOrder],
-                actions: [
-                    { label: "View Order Details", path: "/orders", icon: "Package" },
-                    { label: "Continue Shopping", path: "/shop", icon: "ShoppingBag" }
-                ]
-            };
-        } catch (error) {
-            console.error("[ChatbotService] handleSpecificOrderLookup error:", error.message);
-            return {
-                replyText: "An error occurred while looking up that order. Please check your **My Orders** page.",
-                actions: [{ label: "My Orders", path: "/orders", icon: "Package" }]
-            };
-        }
-    }
-
-    /**
-     * Handle user order inquiries
-     */
-    async handleOrderInquiry(userId, rawText) {
-        if (!userId) {
-            return {
-                replyText: "📦 **Order Tracking & Management**\n\nTo view your live order updates, please **Log In** to your account, or enter your **Order ID (UUID)** here directly.\n\n• **Express Phnom Penh**: 1-2 Business Days\n• **Provinces**: 2-4 Business Days",
-                actions: [
-                    { label: "Log In to View Orders", path: "/auth/login", icon: "User" },
-                    { label: "Track in My Orders", path: "/orders", icon: "Package" }
-                ],
-                suggestedPrompts: ["What payment methods are supported?", "How does shipping work?", "Show flash sales"]
-            };
-        }
-
-        try {
-            const orders = await Order.findAll({
-                where: { user_id: userId },
-                order: [["created_at", "DESC"]],
-                limit: 3,
-                include: [
-                    {
-                        model: OrderItem,
-                        as: "items",
-                        include: [
-                            {
-                                model: Product,
-                                as: "product",
-                                attributes: ["id", "name", "price"],
-                                include: [{ model: ProductImage, as: "images", attributes: ["image_url", "is_primary"] }]
-                            }
-                        ]
-                    }
-                ]
-            });
-
-            if (!orders || orders.length === 0) {
+            if (recentOrders.length > 0) {
                 return {
-                    replyText: "📦 You don't have any recent orders yet. Explore our latest arrivals and flash sales to find your next favorite tech gear!",
+                    replyText: isKhmer
+                        ? `📦 សួស្តី${greetingName}! នេះជាប្រវត្តិការបញ្ជាទិញចុងក្រោយរបស់អ្នកនៅ Angkor Shopping Mall ៖`
+                        : `📦 Hello ${greetingName}! Here are your most recent orders at Angkor Shopping Mall:`,
+                    orders: recentOrders,
                     actions: [
-                        { label: "Shop Deals Now", path: "/shop", icon: "ShoppingBag" },
-                        { label: "Browse Flash Sales", path: "/shop?flashSale=true", icon: "Flame" }
+                        { label: isKhmer ? "📦 មើលការបញ្ជាទិញទាំងអស់" : "📦 View All Orders", path: "/orders", icon: "Package" }
                     ]
                 };
             }
 
-            const formattedOrders = orders.map(o => this.formatOrderCard(o));
-            const latest = orders[0];
-
             return {
-                replyText: `📦 Here are your latest orders. Your most recent order **#${latest.id.slice(0, 8)}** is currently **${latest.status.toUpperCase()}**.\n\nYou can track delivery updates or view complete invoices below:`,
-                orders: formattedOrders,
+                replyText: isKhmer
+                    ? `📦 សួស្តី${greetingName}! លោកអ្នកមិនទាន់មានការបញ្ជាទិញនៅឡើយទេ។ សូមរីករាយជាមួយការទិញទំនិញក្នុងហាងយើងខ្ញុំ!`
+                    : `📦 Hello ${greetingName}! You don't have any placed orders yet. Explore our shop to find top tech deals!`,
                 actions: [
-                    { label: "View All Orders", path: "/orders", icon: "Package" },
-                    { label: "Shop More Products", path: "/shop", icon: "ShoppingBag" }
+                    { label: isKhmer ? "⚡ Flash Sales បញ្ចុះតម្លៃ" : "⚡ Flash Sales", path: "/shop?flashSale=true", icon: "Flame" },
+                    { label: isKhmer ? "🛍️ ទៅកាន់ហាង" : "🛍️ Browse Shop", path: "/shop", icon: "ShoppingBag" }
                 ]
             };
-        } catch (error) {
-            console.error("[ChatbotService] handleOrderInquiry error:", error.message);
-            return {
-                replyText: "You can track and manage all your orders directly in the **My Orders** page.",
-                actions: [{ label: "Open Orders", path: "/orders", icon: "Package" }]
-            };
         }
-    }
 
-    /**
-     * Active Flash Sales Handler
-     */
-    async handleFlashSales() {
-        try {
-            const flashSales = await FlashSale.findAll({
-                where: { status: "active" },
-                order: [["discount", "DESC"]],
-                limit: 4
-            });
-
-            if (!flashSales || flashSales.length === 0) {
-                return {
-                    replyText: "🔥 **Today's Hot Deals & Special Offers**\n\nWhile flash deals are refreshing, you can browse all discounted products in our shop right now!",
-                    actions: [
-                        { label: "Browse Shop", path: "/shop", icon: "ShoppingBag" },
-                        { label: "AI Recommendations", path: "/recommendations", icon: "Sparkles" }
-                    ]
-                };
-            }
-
-            const products = flashSales.map(fs => ({
-                id: fs.product_id || fs.id,
-                name: fs.name,
-                price: parseFloat(fs.price),
-                original_price: parseFloat(fs.originalPrice || fs.price),
-                discount_percentage: fs.discount || 0,
-                image_url: fs.image || null,
-                badge: fs.badge || `${fs.discount}% OFF`,
-                in_stock: (fs.stockLimit || 20) > 0,
-                claimed_pct: fs.claimedPct || 50,
-                is_flash_sale: true
-            }));
-
-            const maxDiscount = Math.max(...flashSales.map(f => f.discount || 0));
-
+        // Flash Sale / Discount
+        if (text.includes('flash') || text.includes('sale') || text.includes('deal') || text.includes('discount') || text.includes('បញ្ចុះតម្លៃ') || text.includes('ប្រូម៉ូសិន')) {
+            const flashProducts = await this.getFlashSaleProducts();
             return {
-                replyText: `🔥 **Live Flash Sales & Exclusive Deals!**\n\nSave up to **${maxDiscount}% OFF** on top electronics and gadgets today. Limited stock available!`,
-                products: products,
+                replyText: isKhmer
+                    ? `🔥 សួស្តី${greetingName}! ថ្ងៃនេះ Angkor Shopping Mall មានប្រូម៉ូសិន Flash Sale បញ្ចុះតម្លៃរហូតដល់ 50% លើផលិតផលស្មាតហ្វូន កុំព្យូទ័រ និងគ្រឿងអេឡិចត្រូនិកជាច្រើន! ⚡`
+                    : `🔥 Hello ${greetingName}! Today Angkor Shopping Mall has exciting Flash Sale discounts up to 50% off on smartphones, laptops, and gadgets! ⚡`,
+                products: flashProducts.length > 0 ? flashProducts : matchingProducts,
                 actions: [
-                    { label: "Explore All Deals", path: "/shop", icon: "Flame" },
-                    { label: "Trade-in & Save More", path: "/trading", icon: "Repeat" }
-                ],
-                suggestedPrompts: ["How does trade-in work?", "What are payment methods?", "Find phones under $500"]
-            };
-        } catch (error) {
-            console.error("[ChatbotService] handleFlashSales error:", error.message);
-            return {
-                replyText: "🔥 Check out today's best discounted products in the shop!",
-                actions: [{ label: "Browse Shop", path: "/shop", icon: "ShoppingBag" }]
-            };
-        }
-    }
-
-    /**
-     * Trade-in Assistant
-     */
-    async handleTradeInInquiry() {
-        try {
-            return {
-                replyText: "🔄 **Angkor Shopping Mall Trade-In Program**\n\nUpgrade your smartphone or laptop effortlessly with our 3-step trade-in process:\n\n1. **Submit Device Info**: Select brand, model, condition (Like New, Good, Fair).\n2. **Get Instant Valuation**: Receive an instant trade valuation and exchange estimate.\n3. **Apply Trade Discount**: Deduct the trade credit directly on your new checkout or swap with verified members!",
-                actions: [
-                    { label: "Start Trade-In Now", path: "/trading", icon: "Repeat" },
-                    { label: "Browse New Phones", path: "/shop", icon: "ShoppingBag" }
-                ],
-                suggestedPrompts: [
-                    "Show flash sales",
-                    "Find laptops under $1000",
-                    "How to track order?"
+                    { label: isKhmer ? "⚡ មើល Flash Sales ទាំងអស់" : "⚡ View All Flash Deals", path: "/shop?flashSale=true", icon: "Flame" }
                 ]
             };
-        } catch (error) {
+        }
+
+        // Payment / Bakong KHQR
+        if (text.includes('pay') || text.includes('khqr') || text.includes('aba') || text.includes('bakong') || text.includes('card') || text.includes('លុយ') || text.includes('ទូទាត់')) {
             return {
-                replyText: "🔄 Trade your old devices for instant store credits or direct exchange. Visit our **Trade-In Hub** to get started!",
-                actions: [{ label: "Trade-In Hub", path: "/trading", icon: "Repeat" }]
+                replyText: isKhmer
+                    ? `💳 **វិធីទូទាត់ប្រាក់នៅ Angkor Shopping Mall**\n\nសួស្តី${greetingName}! ហាងយើងខ្ញុំទទួលការទូទាត់ប្រាក់យ៉ាងងាយស្រួល និងមានសុវត្ថិភាពខ្ពស់ ៖\n\n• 🇰🇭 **Bakong KHQR**: ស្កេនទូទាត់បានភ្លាមៗជាមួយ ABA, ACLEDA, Wing, Canadia, Sathapana និងគ្រប់ធនាគារក្នុងស្រុក។\n• 💳 **Credit / Debit Cards**: Visa, Mastercard & UnionPay\n• 🚚 **Cash on Delivery (COD)**: ទូទាត់ប្រាក់ផ្ទាល់ពេលទំនិញដឹកដល់ដៃ\n• 🔄 **Trade-In Credits**: ប្រើប្រាស់ឥណទានប្តូរសេរីទូរស័ព្ទដើម្បីកាត់បន្ថយតម្លៃទិញ`
+                    : `💳 **Payment Methods at Angkor Shopping Mall**\n\nHello ${greetingName}! We support fast, secure payments via:\n\n• 🇰🇭 **Bakong KHQR**: Instant QR scan with ABA, ACLEDA, Wing, Canadia, and all Cambodian bank apps.\n• 💳 **Visa / Mastercard**: Secure debit and credit card processing.\n• 🚚 **Cash on Delivery (COD)**: Pay when your items arrive at your doorstep.\n• 🔄 **Trade-In Credit**: Apply instant exchange discounts.`,
+                actions: [
+                    { label: isKhmer ? "🛍️ ទៅកាន់ហាងទិញទំនិញ" : "🛍️ Shop Now", path: "/shop", icon: "ShoppingBag" },
+                    { label: isKhmer ? "🔄 សេវាកម្ម Trade-In" : "🔄 Trade-In Hub", path: "/trading", icon: "Repeat" }
+                ]
             };
         }
-    }
 
-    /**
-     * Payment Methods Info
-     */
-    handlePaymentInfo() {
-        return {
-            replyText: "💳 **Supported Payment Methods at Angkor Shopping Mall**\n\n• **ABA PayWay & KHQR**: Instant payment via any Cambodian banking app (Bakong KHQR standard).\n• **Wing Bank / TrueMoney**: Fast digital wallet payments.\n• **Credit & Debit Cards**: Visa, MasterCard, UnionPay supported securely.\n• **Cash on Delivery (COD)**: Available for orders within Phnom Penh.\n• **Trade-In Credits**: Apply verified device valuation directly as an instant checkout discount!",
-            actions: [
-                { label: "Shop Now & Checkout", path: "/shop", icon: "ShoppingBag" },
-                { label: "Trade-In Program", path: "/trading", icon: "Repeat" }
-            ],
-            suggestedPrompts: ["How does delivery work?", "What is the warranty policy?", "Show flash sales"]
-        };
-    }
+        // Trade-In
+        if (text.includes('trade') || text.includes('swap') || text.includes('exchange') || text.includes('ប្តូរ') || text.includes('ចាស់')) {
+            return {
+                replyText: isKhmer
+                    ? `🔄 **សេវាកម្មប្តូរសេរីទូរស័ព្ទ & កុំព្យូទ័រ (Device Trade-In)**\n\nសួស្តី${greetingName}! លោកអ្នកអាចយកទូរស័ព្ទដៃ ឬ Laptop ចាស់ៗមកវាយតម្លៃ ដើម្បីទទួលបានឥណទានបញ្ចុះតម្លៃភ្លាមៗពេលទិញផលិតផលថ្មីនៅ Angkor Shopping Mall! 📱💻`
+                    : `🔄 **Device Trade-In Program**\n\nHello ${greetingName}! You can exchange your pre-owned smartphone or laptop for instant discount credits towards brand-new tech at Angkor Shopping Mall! 📱💻`,
+                actions: [
+                    { label: isKhmer ? "🔄 វាយតម្លៃឧបករណ៍ចាស់" : "🔄 Get Trade-In Estimate", path: "/trading", icon: "Repeat" }
+                ]
+            };
+        }
 
-    /**
-     * Shipping & Delivery Info
-     */
-    handleShippingInfo() {
-        return {
-            replyText: "🚚 **Fast & Reliable Delivery Across Cambodia**\n\n• **Phnom Penh Express**: 1 - 2 Business Days (Same-day express dispatch available).\n• **Provincial Delivery**: 2 - 4 Business Days via reliable express courier network.\n• **Live Tracking**: Real-time status tracking available inside your order invoice.\n• **Free Shipping**: Available for selected promotional orders!",
-            actions: [
-                { label: "Track My Orders", path: "/orders", icon: "Package" },
-                { label: "Browse Store", path: "/shop", icon: "ShoppingBag" }
-            ],
-            suggestedPrompts: ["Track my order", "Payment options", "Flash sales"]
-        };
-    }
+        // Product search results if matched
+        if (matchingProducts.length > 0) {
+            return {
+                replyText: isKhmer
+                    ? `✨ សួស្តី${greetingName}! ខ្ញុំបានស្វែងរកឃើញផលិតផលដែលត្រូវនឹងអ្វីដែលលោកអ្នកចង់បាន ៖`
+                    : `✨ Hello ${greetingName}! Here are the top matching products found in our catalog:`,
+                products: matchingProducts,
+                actions: [
+                    { label: isKhmer ? "🛍️ មើលទំនិញបន្ថែមទៀត" : "🛍️ View Full Catalog", path: "/shop", icon: "ShoppingBag" }
+                ]
+            };
+        }
 
-    /**
-     * Warranty & Returns Info
-     */
-    handleWarrantyInfo() {
+        // General Greeting / Assistance
         return {
-            replyText: "🛡️ **Official Warranty & Return Guarantee**\n\n• **1-Year Official Warranty**: Guaranteed on all brand-new electronics, laptops, and smartphones.\n• **7-Day Hassle-Free Replacement**: For any factory or hardware defects.\n• **100% Genuine Products**: Sourced directly from official authorized distributors (Apple, Samsung, Asus, Sony, etc.).\n• **Technical Support**: In-house support technicians ready to assist.",
+            replyText: isKhmer
+                ? `👋 សួស្តី${greetingName}! ខ្ញុំជា **Smart AI Shopping Assistant** របស់ Angkor Shopping Mall! ខ្ញុំអាចជួយបងប្អូនស្វែងរកទំនិញ ពិនិត្យប្រូម៉ូសិន Flash Sale តាមដានការបញ្ជាទិញ ឬភ្ជាប់ទំនាក់ទំនងទៅកាន់ Admin ហាង។ តើបងចង់ស្វែងរកអ្វីដែរ? ✨`
+                : `👋 Hello ${greetingName}! I'm your **Smart AI Shopping Assistant** at Angkor Shopping Mall! I can help you find products, check daily flash deals, track your orders, or contact store support. How can I help you today? ✨`,
             actions: [
-                { label: "Browse Official Brands", path: "/shop", icon: "ShoppingBag" },
-                { label: "Customer Care", path: "/orders", icon: "HelpCircle" }
-            ],
-            suggestedPrompts: ["What are the store hours?", "Show top rated products", "Payment methods"]
-        };
-    }
-
-    /**
-     * Store Location & Contact Info
-     */
-    handleStoreInfo() {
-        return {
-            replyText: "🏢 **Angkor Shopping Mall Customer Care & Store Info**\n\n• **Main Store**: Phnom Penh, Kingdom of Cambodia\n• **Operating Hours**: Monday - Sunday (8:00 AM - 9:00 PM ICT)\n• **Hotline / Telegram**: +855 23 888 999\n• **Email**: support@angkorshoppingmall.com\n• **Live AI Support**: 24/7 Available right here in this chat!",
-            actions: [
-                { label: "Browse Catalog", path: "/shop", icon: "ShoppingBag" },
-                { label: "Trade-In Center", path: "/trading", icon: "Repeat" }
-            ],
-            suggestedPrompts: ["Show flash sales", "Find iPhone accessories", "Track my order"]
-        };
-    }
-
-    /**
-     * Greetings Handler
-     */
-    handleGreeting() {
-        return {
-            replyText: "👋 **Hello! Welcome to Angkor Shopping Mall!**\n\nI'm your **Smart AI Shopping Assistant**. I can help you with:\n\n✨ Finding products & comparing specs\n🔥 Discovering live flash sales & discount deals\n📦 Tracking your order delivery in real time\n🔄 Evaluating devices for instant Trade-In discounts\n💳 Answering payment, shipping, and warranty questions\n\nWhat would you like to explore today?",
-            actions: [
-                { label: "⚡ Flash Sales", path: "/shop?flashSale=true", icon: "Flame" },
-                { label: "🛍️ Browse Shop", path: "/shop", icon: "ShoppingBag" },
-                { label: "🔄 Device Trade-In", path: "/trading", icon: "Repeat" },
-                { label: "✨ AI Recommendations", path: "/recommendations", icon: "Sparkles" }
-            ],
-            suggestedPrompts: [
-                "What are today's flash sales?",
-                "Find smartphones under $500",
-                "How does trade-in work?",
-                "Track my order status"
+                { label: isKhmer ? "⚡ Flash Sales បញ្ចុះតម្លៃ" : "⚡ Flash Deals", path: "/shop?flashSale=true", icon: "Flame" },
+                { label: isKhmer ? "🛍️ មើលទំនិញទាំងអស់" : "🛍️ Browse Shop", path: "/shop", icon: "ShoppingBag" },
+                { label: isKhmer ? "✉️ ផ្ញើសារទៅ Admin" : "✉️ Message Admin", actionType: "contact_admin", icon: "Headphones" }
             ]
         };
     }
 
-    /**
-     * Recommendations Handler
-     */
-    async handleRecommendations() {
+    async getFlashSaleProducts() {
         try {
-            const products = await Product.findAll({
-                where: { is_active: true },
+            const sales = await FlashSale.findAll({
+                where: { status: 'active' },
+                limit: 4,
                 include: [
-                    { model: Category, as: "category", attributes: ["name"] },
-                    { model: Brand, as: "brand", attributes: ["name"] },
-                    { model: ProductImage, as: "images", attributes: ["image_url", "is_primary"] },
-                    { model: ProductReview, as: "reviews", attributes: ["rating"] }
-                ],
-                order: [["created_at", "DESC"]],
-                limit: 4
-            });
-
-            const formatted = products.map(p => this.formatProductCard(p));
-
-            return {
-                replyText: "✨ **Top Trending & AI Recommended Products**\n\nHere are handpicked top-rated products trending in Angkor Shopping Mall today:",
-                products: formatted,
-                actions: [
-                    { label: "Full AI Recommendations", path: "/recommendations", icon: "Sparkles" },
-                    { label: "Browse All Categories", path: "/shop", icon: "ShoppingBag" }
-                ],
-                suggestedPrompts: ["Show flash sales", "Find gaming laptops", "Trade-in old phone"]
-            };
-        } catch (error) {
-            console.error("[ChatbotService] handleRecommendations error:", error.message);
-            return {
-                replyText: "✨ Check out our top curated picks on the recommendations page!",
-                actions: [{ label: "View Recommendations", path: "/recommendations", icon: "Sparkles" }]
-            };
-        }
-    }
-
-    /**
-     * Contextual Product Page Handler
-     */
-    async handleProductContext(productId, queryText) {
-        try {
-            const product = await Product.findOne({
-                where: { id: productId },
-                include: [
-                    { model: Category, as: "category", attributes: ["name"] },
-                    { model: Brand, as: "brand", attributes: ["name"] },
-                    { model: ProductImage, as: "images", attributes: ["image_url", "is_primary"] },
-                    { model: ProductVariant, as: "variants" },
-                    { model: ProductDetail, as: "detail" }
+                    {
+                        model: Product,
+                        as: 'product',
+                        include: [{ model: ProductImage, as: 'images', attributes: ['image_url', 'is_primary'] }]
+                    }
                 ]
             });
-
-            if (!product) return null;
-
-            const card = this.formatProductCard(product);
-            const stockStatus = (product.stock_quantity > 0) ? `In Stock (${product.stock_quantity} available)` : "Out of Stock";
-
-            let reply = `📱 **${product.name}**\n\n• **Price**: $${parseFloat(product.price).toFixed(2)}\n• **Availability**: ${stockStatus}\n• **Brand**: ${product.brand?.name || "Official"}\n• **Category**: ${product.category?.name || "Electronics"}\n• **Warranty**: 1-Year Official Manufacturer Warranty\n• **Delivery**: 1-2 Days Express Delivery in Phnom Penh.`;
-
-            if (product.variants && product.variants.length > 0) {
-                const variantNames = product.variants.map(v => v.sku || `Variant #${v.price}`).slice(0, 3).join(", ");
-                reply += `\n• **Available Options**: ${variantNames}`;
-            }
-
-            return {
-                replyText: reply,
-                products: [card],
-                actions: [
-                    { label: "View Full Specs", path: `/product/${product.id}`, icon: "ShoppingBag" },
-                    { label: "Explore Similar Items", path: "/shop", icon: "Sparkles" }
-                ]
-            };
-        } catch (error) {
-            return null;
-        }
-    }
-
-    /**
-     * Smart Product Search Handler
-     */
-    async handleProductSearch(queryText) {
-        const text = queryText.toLowerCase();
-
-        // 1. Extract Price Constraints
-        let maxPrice = null;
-        let minPrice = null;
-
-        const underMatch = text.match(/(?:under|below|less than|<\s*)\s*\$?(\d+(?:\.\d+)?)/i);
-        if (underMatch) {
-            maxPrice = parseFloat(underMatch[1]);
-        }
-
-        const aboveMatch = text.match(/(?:above|more than|over|>\s*)\s*\$?(\d+(?:\.\d+)?)/i);
-        if (aboveMatch) {
-            minPrice = parseFloat(aboveMatch[1]);
-        }
-
-        const betweenMatch = text.match(/(?:between)\s*\$?(\d+)\s*(?:and|to|-)\s*\$?(\d+)/i);
-        if (betweenMatch) {
-            minPrice = parseFloat(betweenMatch[1]);
-            maxPrice = parseFloat(betweenMatch[2]);
-        }
-
-        // Clean query terms for search
-        const cleanedQuery = queryText
-            .replace(/(?:under|below|less than|above|over|between|and|to|find|show|me|search|look for|buy|want|recommend|best|cheap|\$|\d+)/gi, " ")
-            .trim();
-
-        const searchKeywords = cleanedQuery.split(/\s+/).filter(k => k.length > 1);
-
-        const where = { is_active: true };
-
-        if (maxPrice !== null && minPrice !== null) {
-            where.price = { [Op.between]: [minPrice, maxPrice] };
-        } else if (maxPrice !== null) {
-            where.price = { [Op.lte]: maxPrice };
-        } else if (minPrice !== null) {
-            where.price = { [Op.gte]: minPrice };
-        }
-
-        if (searchKeywords.length > 0) {
-            const orConditions = [];
-            for (const kw of searchKeywords) {
-                orConditions.push({ name: { [Op.iLike]: `%${kw}%` } });
-                orConditions.push({ description: { [Op.iLike]: `%${kw}%` } });
-            }
-            where[Op.or] = orConditions;
-        }
-
-        try {
-            let products = await Product.findAll({
-                where,
-                include: [
-                    { model: Category, as: "category", attributes: ["name"] },
-                    { model: Brand, as: "brand", attributes: ["name"] },
-                    { model: ProductImage, as: "images", attributes: ["image_url", "is_primary"] },
-                    { model: ProductReview, as: "reviews", attributes: ["rating"] }
-                ],
-                order: [["created_at", "DESC"]],
-                limit: 5
-            });
-
-            // If no exact match with full keywords, try fuzzy match on category/brand names
-            if (products.length === 0 && searchKeywords.length > 0) {
-                products = await Product.findAll({
-                    where: { is_active: true },
-                    include: [
-                        {
-                            model: Category,
-                            as: "category",
-                            attributes: ["name"],
-                            where: {
-                                name: { [Op.iLike]: `%${searchKeywords[0]}%` }
-                            },
-                            required: false
-                        },
-                        {
-                            model: Brand,
-                            as: "brand",
-                            attributes: ["name"],
-                            where: {
-                                name: { [Op.iLike]: `%${searchKeywords[0]}%` }
-                            },
-                            required: false
-                        },
-                        { model: ProductImage, as: "images", attributes: ["image_url", "is_primary"] }
-                    ],
-                    limit: 4
-                });
-            }
-
-            // Fallback: If still empty, return top popular products
-            if (products.length === 0) {
-                const popularProducts = await Product.findAll({
-                    where: { is_active: true },
-                    include: [
-                        { model: Category, as: "category", attributes: ["name"] },
-                        { model: Brand, as: "brand", attributes: ["name"] },
-                        { model: ProductImage, as: "images", attributes: ["image_url", "is_primary"] }
-                    ],
-                    order: [["created_at", "DESC"]],
-                    limit: 4
-                });
-
-                const formatted = popularProducts.map(p => this.formatProductCard(p));
-
+            return sales.map(s => {
+                const prod = s.product;
+                if (!prod) return null;
                 return {
-                    replyText: `🔍 I couldn't find exact matches for "${queryText}". However, here are some of our best-selling featured products you might like:`,
-                    products: formatted,
-                    actions: [
-                        { label: "Browse All in Shop", path: `/shop?search=${encodeURIComponent(queryText)}`, icon: "ShoppingBag" },
-                        { label: "Flash Sales", path: "/shop?flashSale=true", icon: "Flame" }
-                    ],
-                    suggestedPrompts: ["Show flash sales", "Find phones under $500", "How does trade-in work?"]
+                    id: prod.id,
+                    name: prod.name,
+                    price: parseFloat(s.price || prod.price),
+                    originalPrice: parseFloat(prod.price),
+                    discount_percentage: s.discount_percentage,
+                    image_url: prod.images?.[0]?.image_url || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=500',
+                    is_flash_sale: true
                 };
-            }
-
-            const formatted = products.map(p => this.formatProductCard(p));
-            const countStr = products.length;
-
-            return {
-                replyText: `🔍 Found **${countStr}** matching item${countStr > 1 ? "s" : ""} for your search:\n\nTap any item below to view full specifications or add directly to your cart!`,
-                products: formatted,
-                actions: [
-                    { label: `View all results in Shop`, path: `/shop?search=${encodeURIComponent(cleanedQuery || queryText)}`, icon: "ShoppingBag" },
-                    { label: "Trade-In Device", path: "/trading", icon: "Repeat" }
-                ],
-                suggestedPrompts: [
-                    "What payment methods do you accept?",
-                    "How does shipping work?",
-                    "Show flash sales"
-                ]
-            };
-        } catch (error) {
-            console.error("[ChatbotService] handleProductSearch error:", error.message);
-            return {
-                replyText: `I can help you find smartphones, laptops, trade-ins, and deals at Angkor Shopping Mall. What are you looking for?`,
-                actions: [
-                    { label: "Explore Shop", path: "/shop", icon: "ShoppingBag" },
-                    { label: "Trade-In", path: "/trading", icon: "Repeat" }
-                ]
-            };
+            }).filter(Boolean);
+        } catch (e) {
+            return [];
         }
     }
 
-    /**
-     * Dynamic Quick Prompts Provider
-     */
+    formatProductCard(product) {
+        const primaryImg = product.images?.find(i => i.is_primary)?.image_url || product.images?.[0]?.image_url || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=500';
+        const hasFlash = product.flashSales && product.flashSales.length > 0;
+        const flashPrice = hasFlash ? parseFloat(product.flashSales[0].price) : null;
+
+        return {
+            id: product.id,
+            name: product.name,
+            price: flashPrice || parseFloat(product.price),
+            originalPrice: hasFlash ? parseFloat(product.price) : null,
+            image_url: primaryImg,
+            category: product.category?.name || '',
+            brand: product.brand?.name || '',
+            stock_quantity: product.stock_quantity,
+            is_flash_sale: hasFlash
+        };
+    }
+
+    getRecommendedActions(text, isKhmer) {
+        return [
+            { label: isKhmer ? "⚡ Flash Sales" : "⚡ Flash Deals", path: "/shop?flashSale=true", icon: "Flame" },
+            { label: isKhmer ? "🛍️ ទិញទំនិញ" : "🛍️ Shop All", path: "/shop", icon: "ShoppingBag" },
+            { label: isKhmer ? "🔄 សេវាកម្ម Trade-In" : "🔄 Trade-In", path: "/trading", icon: "Repeat" },
+            { label: isKhmer ? "✉️ ផ្ញើសារទៅ Admin" : "✉️ Contact Support", actionType: "contact_admin", icon: "Headphones" }
+        ];
+    }
+
     async getQuickPrompts() {
         return [
             { label: "⚡ Flash Sales", query: "What are today's flash sales and deals?" },
             { label: "📱 Phones under $500", query: "Show me smartphones under $500" },
             { label: "💻 Laptops & PC", query: "Find top performance laptops" },
             { label: "🔄 Device Trade-In", query: "How does device trade-in work?" },
-            { label: "📦 Track Order", query: "Where is my order?" },
+            { label: "✉️ Message Admin", query: "I want to contact admin and support" },
+            { label: "📦 Track My Order", query: "Where is my order?" },
             { label: "💳 Payment Methods", query: "What payment methods are supported?" }
         ];
-    }
-
-    /**
-     * Formatter helpers
-     */
-    formatProductCard(product) {
-        const primaryImg = product.images?.find(img => img.is_primary)?.image_url || product.images?.[0]?.image_url || null;
-        let avgRating = 5;
-        if (product.reviews && product.reviews.length > 0) {
-            const sum = product.reviews.reduce((acc, r) => acc + (r.rating || 5), 0);
-            avgRating = parseFloat((sum / product.reviews.length).toFixed(1));
-        }
-
-        return {
-            id: product.id,
-            name: product.name,
-            price: parseFloat(product.price),
-            original_price: parseFloat(product.price),
-            discount_percentage: 0,
-            image_url: primaryImg,
-            category_name: product.category?.name || "Electronics",
-            brand_name: product.brand?.name || "Brand",
-            in_stock: (product.stock_quantity > 0),
-            rating: avgRating
-        };
-    }
-
-    formatOrderCard(order) {
-        const firstItem = order.items?.[0];
-        const primaryImg = firstItem?.product?.images?.find(img => img.is_primary)?.image_url || firstItem?.product?.images?.[0]?.image_url || null;
-
-        return {
-            id: order.id,
-            short_id: order.id.slice(0, 8),
-            status: order.status,
-            total_amount: parseFloat(order.total_amount).toFixed(2),
-            item_count: order.items?.length || 1,
-            first_product_name: firstItem?.product?.name || "Order Item",
-            image_url: primaryImg,
-            created_at: order.created_at || order.createdAt,
-            shipping_address: order.shipping_address,
-            contact_phone: order.contact_phone
-        };
     }
 }
 
