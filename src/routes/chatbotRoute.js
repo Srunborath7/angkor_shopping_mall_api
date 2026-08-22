@@ -15,4 +15,10 @@ router.post('/message', optionalAuth, chatbotController.sendMessage);
  */
 router.get('/prompts', optionalAuth, chatbotController.getPrompts);
 
+/**
+ * GET /api/chatbot/tts
+ * Universal Khmer & English TTS streaming proxy
+ */
+router.get('/tts', chatbotController.streamTTS);
+
 module.exports = router;

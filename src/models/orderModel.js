@@ -37,8 +37,39 @@ const Order = sequelize.define('Order', {
         defaultValue: 'pending',
         allowNull: false,
     },
+    payment_method: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        defaultValue: 'KHQR',
+        comment: 'Payment method selected (KHQR, ABA_PAY, COD, VISA_MASTER)',
+    },
+    currency: {
+        type: DataTypes.STRING(10),
+        allowNull: true,
+        defaultValue: 'USD',
+    },
     payment_intent_id: {
         type: DataTypes.STRING,
+        allowNull: true,
+    },
+    khqr_string: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+    },
+    khqr_md5: {
+        type: DataTypes.STRING(64),
+        allowNull: true,
+    },
+    khqr_expires_at: {
+        type: DataTypes.DATE,
+        allowNull: true,
+    },
+    transaction_hash: {
+        type: DataTypes.STRING,
+        allowNull: true,
+    },
+    paid_at: {
+        type: DataTypes.DATE,
         allowNull: true,
     },
     shipping_address: {

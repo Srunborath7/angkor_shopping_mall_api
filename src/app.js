@@ -49,6 +49,7 @@ const brandRoutes = require("./routes/brandRoute");
 const productRoutes = require("./routes/productRoute");
 const cartRoutes = require("./routes/cartRoute");
 const orderRoutes = require("./routes/orderRoute");
+const paymentRoutes = require("./routes/paymentRoute");
 const recommendationRoutes = require("./routes/recommendationRoute");
 const productVariantRoutes = require("./routes/productVariantRoute");
 const productDetailRoutes = require("./routes/productDetailRoute");
@@ -69,11 +70,6 @@ app.get("/", (req, res) => {
     });
 });
 
-
-// ========================================
-// PAYMENT
-// ========================================
-
 app.get("/pay/:orderId", (req, res) => {
     res.sendFile(
         path.join(
@@ -84,11 +80,6 @@ app.get("/pay/:orderId", (req, res) => {
     );
 });
 
-
-// ========================================
-// API
-// ========================================
-
 app.use("/api/roles", roleRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/auth", authRoutes);
@@ -98,6 +89,7 @@ app.use("/api/products", productRoutes);
 app.use("/api/flash-sales", flashSaleRoutes);
 app.use("/api/cart", cartRoutes);
 app.use("/api/orders", orderRoutes);
+app.use("/api/payments", paymentRoutes);
 app.use("/api/recommendations", recommendationRoutes);
 app.use("/api/suppliers", supplierRoutes);
 app.use("/api/purchase-orders", purchaseOrderRoutes);
@@ -111,31 +103,19 @@ app.use("/api", productDetailRoutes);
 app.use("/api", productImageRoutes);
 app.use("/api", productReviewRoutes);
 
-
-// ========================================
-// 404
-// ========================================
-
 app.use((req, res) => {
     res.status(404).json({
         success: false,
-        message: "Route not found"
+        message: "Resource not found"
     });
 });
-
-
-// ========================================
-// ERROR
-// ========================================
 
 app.use((err, req, res, next) => {
-    console.error(err);
-
-    res.status(err.status || 500).json({
+    console.error("Global Error:", err);
+    res.status(500).json({
         success: false,
-        message: err.message || "Internal Server Error"
+        message: "Internal server error"
     });
 });
-
 
 module.exports = app;
