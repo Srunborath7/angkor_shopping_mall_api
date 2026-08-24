@@ -550,6 +550,38 @@ class UserService {
 
         return { message: "Password reset successful" };
     }
+    async adminChangePassword(userId, newPassword) {
+        if (!newPassword || newPassword.length < 6) {
+            throw new Error('Password must be at least 6 characters long');
+        }
+        const user = await User.findByPk(userId);
+        if (!user) {
+            throw new Error('User not found');
+        }
+        user.password = await bcrypt.hash(newPassword, 10);
+        await user.save();
+        return true;
+    }
+
+    async getStaffUsers() {
+        return await User.findAll({
+            include: [
+                {
+                    model: Role,
+                    as: "roles",
+                    where: {
+                        name: { [Op.in]: ['admin', 'super_admin', 'staff', 'manager', 'cashier', 'mall_manager'] }
+                    },
+                    attributes: ["id", "name"],
+                    through: {
+                        attributes: [],
+                    },
+                    required: true,
+                },
+            ],
+        });
+    }
+
     async getCustomers() {
         return await User.findAll({
             include: [

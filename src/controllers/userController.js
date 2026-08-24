@@ -255,6 +255,36 @@ class UserController {
         }
     }
 
+    async adminChangePassword(req, res) {
+        try {
+            const { id } = req.params;
+            const { password } = req.body;
+
+            await userService.adminChangePassword(id, password);
+
+            return successResponse(
+                res,
+                'Password updated successfully'
+            );
+        } catch (error) {
+            return errorResponse(res, error.message);
+        }
+    }
+
+    async getStaff(req, res) {
+        try {
+            const staff = await userService.getStaffUsers();
+
+            return successResponse(
+                res,
+                'Staff users retrieved successfully',
+                staff
+            );
+        } catch (error) {
+            return errorResponse(res, error.message);
+        }
+    }
+
     async getCustomers(req, res) {
         try {
             const customers = await userService.getCustomers();
