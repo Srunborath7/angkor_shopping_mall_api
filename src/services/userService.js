@@ -340,67 +340,130 @@ class UserService {
         return true;
     }
     async sendResetOtp(email) {
-
-        const user = await User.findOne({ where: { email } });
-
-        if (!user) {
-            throw new Error('User not found');
+        const cleanEmail = (email || '').trim().toLowerCase();
+        if (!cleanEmail || !cleanEmail.includes('@')) {
+            throw new Error('Please provide a valid email address');
         }
 
+        const user = await User.findOne({ where: { email: cleanEmail } });
+
+        if (!user) {
+            throw new Error('No account found associated with this email');
+        }
+
+        // Generate 6-digit OTP
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+        // Invalidate previous unused OTPs for this user & purpose
+        await Otp.update(
+            { is_used: true },
+            {
+                where: {
+                    user_id: user.id,
+                    purpose: 'reset_password',
+                    is_used: false
+                }
+            }
+        );
 
         await Otp.create({
             user_id: user.id,
             otp,
             purpose: 'reset_password',
-            expires_at: new Date(Date.now() + 5 * 60 * 1000)
+            expires_at: new Date(Date.now() + 5 * 60 * 1000),
+            is_used: false
         });
 
-        await sendOtpEmail(email, otp);
+        await sendOtpEmail(cleanEmail, otp);
 
-        return { message: 'OTP sent to email' };
+        return { 
+            message: 'OTP verification code sent to your email successfully',
+            email: cleanEmail
+        };
     }
-    async verifyOtp(email, otp) {
 
-        const user = await User.findOne({ where: { email } });
-        if (!user) throw new Error('User not found');
+    async verifyOtp(email, otp) {
+        const cleanEmail = (email || '').trim().toLowerCase();
+        const cleanOtp = (otp || '').toString().trim();
+
+        if (!cleanEmail || !cleanOtp) {
+            throw new Error('Email and OTP code are required');
+        }
+
+        const user = await User.findOne({ where: { email: cleanEmail } });
+        if (!user) {
+            throw new Error('User not found');
+        }
+
         const record = await Otp.findOne({
             where: {
                 user_id: user.id,
-                otp,
+                otp: cleanOtp,
                 purpose: 'reset_password',
                 is_used: false
-            }
+            },
+            order: [['created_at', 'DESC']]
         });
-        if (!record) throw new Error('Invalid OTP');
-        if (record.expires_at < new Date()) {
-            throw new Error('OTP expired');
+
+        if (!record) {
+            throw new Error('Invalid OTP verification code');
+        }
+
+        if (new Date() > new Date(record.expires_at)) {
+            throw new Error('OTP code has expired. Please request a new code.');
         }
 
         record.is_used = true;
         await record.save();
+        
         const resetToken = generateResetToken(user);
 
         return {
-            resetToken
+            resetToken,
+            message: 'OTP verified successfully'
         };
     }
-    async resetPassword(resetToken, newPassword) {
 
-        const decoded = jwt.verify(resetToken, process.env.RESET_SECRET);
+    async resetPassword(resetToken, newPassword) {
+        if (!resetToken) {
+            throw new Error('Reset token is required');
+        }
+
+        if (!newPassword || newPassword.length < 6) {
+            throw new Error('Password must be at least 6 characters long');
+        }
+
+        let decoded;
+        try {
+            decoded = verifyResetToken(resetToken);
+        } catch (tokenErr) {
+            throw new Error('Reset link or token has expired or is invalid');
+        }
 
         const user = await User.findByPk(decoded.userId);
+        if (!user) {
+            throw new Error('User account not found');
+        }
 
-        if (!user) throw new Error('User not found');
-
-        const bcrypt = require('bcrypt');
         const hashed = await bcrypt.hash(newPassword, 10);
-
         user.password = hashed;
         await user.save();
 
-        return { message: "Password reset successful" };
+        // Invalidate any leftover OTPs
+        await Otp.update(
+            { is_used: true },
+            {
+                where: {
+                    user_id: user.id,
+                    purpose: 'reset_password',
+                    is_used: false
+                }
+            }
+        );
+
+        return { message: 'Password has been reset successfully' };
     }
+
     async sendResetOtpTelegram(phone) {
         const user = await User.findOne({
             where: { phone }
