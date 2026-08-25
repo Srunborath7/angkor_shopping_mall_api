@@ -40,6 +40,8 @@ class UserService {
         let role;
         if (data.role_id) {
             role = await Role.findByPk(data.role_id);
+        } else if (data.role) {
+            role = await Role.findOne({ where: { name: data.role } });
         }
 
         if (!role) {
@@ -570,7 +572,7 @@ class UserService {
                     model: Role,
                     as: "roles",
                     where: {
-                        name: { [Op.in]: ['admin', 'super_admin', 'staff', 'manager', 'cashier', 'mall_manager'] }
+                        name: { [Op.ne]: 'customer' }
                     },
                     attributes: ["id", "name"],
                     through: {

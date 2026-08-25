@@ -1,11 +1,15 @@
-const { Order, OrderItem, Product, ProductVariant, User, TradeProduct } = require('../models/relationships');
-const bakongKhqrService = require('../services/bakongKhqrService');
+﻿const { Order, OrderItem, Product, ProductVariant, User, TradeProduct } = require('../models/relationships');
+const abaPaywayService = require('../services/abaPaywayService');
 const { successResponse, errorResponse } = require('../utils/response');
 const { bot } = require('../config/telegram');
 const { trackInteractionBulk } = require('../utils/trackInteraction');
+const { Op } = require('sequelize');
 
 class PaymentController {
-    async generateKHQR(req, res) {
+    /**
+     * Generate ABA PayWay Dynamic QR code / Payment payload
+     */
+    async generateABAQR(req, res) {
         try {
             const { order_id, orderId, currency = 'USD', amount: customAmount } = req.body;
             const targetOrderId = order_id || orderId;
@@ -23,6 +27,11 @@ class PaymentController {
                                 { model: Product, as: 'product' },
                                 { model: ProductVariant, as: 'variant' }
                             ]
+                        },
+                        {
+                            model: User,
+                            as: 'user',
+                            attributes: ['id', 'name', 'email', 'phone']
                         }
                     ]
                 });
@@ -48,44 +57,77 @@ class PaymentController {
                 payableAmount = Math.round(finalAmount * 4100);
             }
 
-            const khqrResult = bakongKhqrService.generateOrderKHQR({
+            // Extract customer info
+            const customerName = order?.user?.name || 'Customer';
+            const nameParts = customerName.split(' ');
+            const firstName = nameParts[0] || 'Valued';
+            const lastName = nameParts.slice(1).join(' ') || 'Customer';
+            const email = order?.user?.email || '';
+            const phone = order?.contact_phone || order?.user?.phone || '';
+
+            // Extract item list
+            const items = order?.items?.map(it => ({
+                name: it.product?.name || 'Product',
+                quantity: it.quantity,
+                price: parseFloat(it.price)
+            })) || [];
+
+            const paywayResult = await abaPaywayService.generateAbaQR({
                 orderId: order?.id || Date.now(),
                 amount: payableAmount,
                 currency: isKHR ? 'KHR' : 'USD',
-                billNumber: order ? `ORD-${order.id.slice(0, 8).toUpperCase()}` : `MALL-${Date.now()}`
+                firstName,
+                lastName,
+                email,
+                phone,
+                items
             });
 
             if (order) {
                 await order.update({
-                    khqr_string: khqrResult.qrString,
-                    khqr_md5: khqrResult.md5,
-                    khqr_expires_at: khqrResult.expiresAt,
-                    currency: khqrResult.currency,
-                    payment_method: 'KHQR'
+                    khqr_string: paywayResult.qrString,
+                    khqr_md5: paywayResult.md5,
+                    khqr_expires_at: paywayResult.expiresAt,
+                    currency: paywayResult.currency,
+                    payment_method: 'ABA_PAYWAY',
+                    payment_intent_id: `ABA-${paywayResult.tranId}`
                 });
             }
 
             const responseData = {
                 orderId: order?.id,
-                ...khqrResult
+                ...paywayResult
             };
 
-            return successResponse(res, 'Bakong KHQR generated successfully', responseData);
+            return successResponse(res, 'ABA PayWay QR generated successfully', responseData);
         } catch (error) {
-            console.error('Error generating KHQR:', error);
-            return errorResponse(res, error.message || 'Failed to generate Bakong KHQR', 500);
+            console.error('Error generating ABA PayWay QR:', error);
+            return errorResponse(res, error.message || 'Failed to generate ABA PayWay QR', 500);
         }
     }
 
-    async checkKHQRStatus(req, res) {
+    /**
+     * Check real-time payment status by tran_id or MD5
+     */
+    async checkABAStatus(req, res) {
         try {
-            const { md5 } = req.params;
-            if (!md5) {
-                return errorResponse(res, 'MD5 hash parameter is required', 400);
+            const { tran_id, md5 } = req.params;
+            const queryKey = tran_id || md5;
+
+            if (!queryKey) {
+                return errorResponse(res, 'Transaction ID or MD5 parameter is required', 400);
             }
 
+            // Find order by matching MD5 or matching payment_intent_id / tranId
             const order = await Order.findOne({
-                where: { khqr_md5: md5 },
+                where: {
+                    [Op.or]: [
+                        { khqr_md5: queryKey },
+                        { payment_intent_id: `ABA-${queryKey}` },
+                        { payment_intent_id: queryKey },
+                        { id: queryKey }
+                    ]
+                },
                 include: [
                     {
                         model: OrderItem,
@@ -106,20 +148,23 @@ class PaymentController {
                 });
             }
 
-            const bakongCheck = await bakongKhqrService.checkTransactionStatus(md5);
+            // Verify with ABA PayWay backend
+            const abaCheck = await abaPaywayService.checkTransactionStatus(queryKey);
 
-            if (bakongCheck.isPaid) {
-                const txn = bakongCheck.transaction || {};
-                const txnHash = txn.hash || txn.md5 || md5;
+            if (abaCheck.isPaid) {
+                const txn = abaCheck.transaction || {};
+                const txnHash = txn.tran_id || queryKey;
 
                 if (order) {
                     await order.update({
                         status: 'paid',
                         paid_at: new Date(),
-                        transaction_hash: txnHash,
-                        payment_intent_id: `BAKONG-${txnHash.substring(0, 16)}`
+                        transaction_hash: `ABA-${txnHash}`,
+                        payment_intent_id: `ABA-${txnHash}`,
+                        payment_method: 'ABA_PAYWAY'
                     });
 
+                    // Update product inventory
                     if (order.items && order.items.length > 0) {
                         for (const item of order.items) {
                             try {
@@ -136,17 +181,18 @@ class PaymentController {
                         }
                     }
 
+                    // Send Telegram notification
                     try {
                         const chatId = process.env.TELEGRAM_CHAT_ID || process.env.CHAT_ID;
                         if (bot && chatId) {
                             bot.sendMessage(
                                 chatId,
-                                `🎉 *KHQR Payment Received!*\n\n` +
+                                `✨ *ABA PayWay Payment Received!*\n\n` +
                                 `📦 *Order:* \`#ORD-${order.id.slice(0, 8).toUpperCase()}\`\n` +
                                 `💰 *Amount:* $${parseFloat(order.total_amount).toFixed(2)}\n` +
                                 `👤 *Customer:* ${order.user?.name || 'Customer'} (${order.contact_phone})\n` +
-                                `🏦 *Method:* Bakong KHQR\n` +
-                                `🔗 *Txn Hash:* \`${txnHash}\``,
+                                `🏦 *Method:* ABA PayWay / KHQR\n` +
+                                `🔑 *ABA Tran ID:* \`${txnHash}\``,
                                 { parse_mode: 'Markdown' }
                             ).catch(e => console.warn('Telegram send warning:', e.message));
                         }
@@ -155,7 +201,7 @@ class PaymentController {
                     }
                 }
 
-                return successResponse(res, 'Payment successfully verified via Bakong KHQR', {
+                return successResponse(res, 'Payment successfully verified via ABA PayWay', {
                     isPaid: true,
                     status: 'paid',
                     orderId: order?.id,
@@ -167,25 +213,38 @@ class PaymentController {
                 isPaid: false,
                 status: order ? order.status : 'pending',
                 orderId: order?.id,
-                message: 'Awaiting payment confirmation'
+                message: 'Awaiting ABA PayWay payment confirmation'
             });
         } catch (error) {
-            console.error('Error checking KHQR status:', error);
-            return errorResponse(res, error.message || 'Failed to verify KHQR status', 500);
+            console.error('Error checking ABA status:', error);
+            return errorResponse(res, error.message || 'Failed to verify ABA PayWay status', 500);
         }
     }
 
+    /**
+     * Instant Payment Simulation for test / development
+     */
     async simulatePayment(req, res) {
         try {
-            const { md5, order_id, orderId } = req.body;
+            const { md5, tran_id, tranId, order_id, orderId } = req.body;
             const targetId = order_id || orderId;
+            const targetKey = tran_id || tranId || md5;
 
             let whereCondition = {};
-            if (md5) whereCondition.khqr_md5 = md5;
-            if (targetId) whereCondition.id = targetId;
+            if (targetId) {
+                whereCondition.id = targetId;
+            } else if (targetKey) {
+                whereCondition = {
+                    [Op.or]: [
+                        { khqr_md5: targetKey },
+                        { payment_intent_id: `ABA-${targetKey}` },
+                        { payment_intent_id: targetKey }
+                    ]
+                };
+            }
 
             if (Object.keys(whereCondition).length === 0) {
-                return errorResponse(res, 'Either md5 or order_id is required to simulate payment', 400);
+                return errorResponse(res, 'Either tran_id, md5, or order_id is required to simulate payment', 400);
             }
 
             const order = await Order.findOne({
@@ -195,7 +254,8 @@ class PaymentController {
                         model: OrderItem,
                         as: 'items',
                         include: [{ model: Product, as: 'product' }, { model: ProductVariant, as: 'variant' }]
-                    }
+                    },
+                    { model: User, as: 'user', attributes: ['id', 'name', 'email', 'phone'] }
                 ]
             });
 
@@ -203,14 +263,14 @@ class PaymentController {
                 return errorResponse(res, 'Order not found', 404);
             }
 
-            const mockTxnHash = `BKNG-SIM-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+            const mockTxnHash = `ABA-SIM-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
             await order.update({
                 status: 'paid',
                 paid_at: new Date(),
                 transaction_hash: mockTxnHash,
                 payment_intent_id: mockTxnHash,
-                payment_method: 'KHQR'
+                payment_method: 'ABA_PAYWAY'
             });
 
             if (order.items && order.items.length > 0) {
@@ -229,17 +289,38 @@ class PaymentController {
                 }
             }
 
-            return successResponse(res, 'Simulated KHQR payment confirmed successfully', {
+            // Telegram notification on simulation
+            try {
+                const chatId = process.env.TELEGRAM_CHAT_ID || process.env.CHAT_ID;
+                if (bot && chatId) {
+                    bot.sendMessage(
+                        chatId,
+                        `⚡ *[TEST SIMULATION] ABA PayWay Confirmed!*\n\n` +
+                        `📦 *Order:* \`#ORD-${order.id.slice(0, 8).toUpperCase()}\`\n` +
+                        `💰 *Amount:* $${parseFloat(order.total_amount).toFixed(2)}\n` +
+                        `🏦 *Method:* ABA PayWay (Simulated)\n` +
+                        `🔑 *Txn Hash:* \`${mockTxnHash}\``,
+                        { parse_mode: 'Markdown' }
+                    ).catch(() => {});
+                }
+            } catch (e) {}
+
+            return successResponse(res, 'Simulated ABA PayWay payment confirmed successfully', {
                 isPaid: true,
                 status: 'paid',
                 orderId: order.id,
                 transactionHash: mockTxnHash
             });
         } catch (error) {
-            console.error('Error simulating KHQR payment:', error);
+            console.error('Error simulating ABA payment:', error);
             return errorResponse(res, error.message || 'Simulation failed', 500);
         }
     }
 }
 
-module.exports = new PaymentController();
+const controller = new PaymentController();
+// Provide backward compatible method aliases
+controller.generateKHQR = controller.generateABAQR.bind(controller);
+controller.checkKHQRStatus = controller.checkABAStatus.bind(controller);
+
+module.exports = controller;
