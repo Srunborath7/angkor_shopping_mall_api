@@ -1,12 +1,16 @@
-﻿const crypto = require('crypto');
+const crypto = require('crypto');
 const axios = require('axios');
 const { BakongKHQR, khqrData, IndividualInfo, MerchantInfo } = require('bakong-khqr');
 
 class AbaPaywayService {
     constructor() {
-        this.apiUrl = process.env.ABA_PAYWAY_API_URL || 'https://checkout-sandbox.payway.com.kh/api/payment-gateway/v1/payments';
-        this.merchantId = process.env.ABA_PAYWAY_MERCHANT_ID || 'angkor_mall';
-        this.apiKey = process.env.ABA_PAYWAY_API_KEY || 'aba_sandbox_api_key';
+        this.rawApiUrl = process.env.ABA_PAYWAY_API_URL || 'https://checkout-sandbox.payway.com.kh/api/payment-gateway/v1/payments';
+        // Normalize base URL (strip trailing /purchase or /generate-qr if present)
+        this.baseUrl = this.rawApiUrl.replace(/\/purchase\/?$/, '').replace(/\/generate-qr\/?$/, '').replace(/\/+$/, '');
+        this.merchantId = process.env.ABA_PAYWAY_MERCHANT_ID || 'e23444444';
+        this.apiKey = process.env.ABA_PAYWAY_API_KEY || 'bff7e9c4570.............';
+        this.rsaPrivateKey = process.env.ABA_PAYWAY_RSA_PRIVATE_KEY || '';
+        this.rsaPublicKey = process.env.ABA_PAYWAY_RSA_PUBLIC_KEY || '';
         this.storeLabel = process.env.ABA_PAYWAY_STORE_LABEL || 'Angkor Shopping Mall';
         this.khqr = new BakongKHQR();
     }
@@ -26,9 +30,19 @@ class AbaPaywayService {
     }
 
     /**
-     * Generate HMAC-SHA512 hash in Base64 for ABA PayWay request signing
+     * Generate HMAC-SHA512 hash in Base64 or RSA signature for ABA PayWay request signing
      */
     generateHash(rawString) {
+        if (this.rsaPrivateKey && this.rsaPrivateKey.includes('BEGIN')) {
+            try {
+                const sign = crypto.createSign('SHA512');
+                sign.update(rawString);
+                sign.end();
+                return sign.sign(this.rsaPrivateKey, 'base64');
+            } catch (rsaErr) {
+                console.warn('RSA signing error, falling back to HMAC-SHA512:', rsaErr.message);
+            }
+        }
         return crypto
             .createHmac('sha512', this.apiKey)
             .update(rawString)
@@ -92,77 +106,85 @@ class AbaPaywayService {
         const returnParams = '';
         const payout = '';
         const lifetime = String(validityMinutes);
-        const qrImageTemplate = 'template3';
+        const qrImageTemplate = 'template1';
 
-        // Hash concatenation string for ABA PayWay /generate-qr endpoint:
-        // req_time + merchant_id + tran_id + amount + items + first_name + last_name + email + phone + purchase_type + payment_option + callback_url + return_deeplink + currency + custom_fields + return_params + payout + lifetime + qr_image_template
+        // Hash concatenation string for ABA PayWay /generate-qr & /purchase endpoints
         const rawHashString = `${reqTime}${this.merchantId}${tranId}${formattedAmount}${itemsBase64}${firstName}${lastName}${email}${phone}${purchaseType}${paymentOption}${callbackUrl}${returnDeeplink}${curr}${customFields}${returnParams}${payout}${lifetime}${qrImageTemplate}`;
         const hash = this.generateHash(rawHashString);
 
         const expTimestamp = Date.now() + validityMinutes * 60 * 1000;
         const expiresAt = new Date(expTimestamp).toISOString();
 
-        // 1. Attempt to call official ABA PayWay API if configured with live credentials
+        const payload = {
+            req_time: reqTime,
+            merchant_id: this.merchantId,
+            tran_id: tranId,
+            amount: formattedAmount,
+            items: itemsBase64,
+            first_name: firstName,
+            last_name: lastName,
+            email: email,
+            phone: phone,
+            purchase_type: purchaseType,
+            payment_option: paymentOption,
+            callback_url: callbackUrl,
+            return_deeplink: returnDeeplink,
+            currency: curr,
+            custom_fields: customFields,
+            return_params: returnParams,
+            payout: payout,
+            lifetime: lifetime,
+            qr_image_template: qrImageTemplate,
+            hash: hash
+        };
+
+        // 1. Attempt live ABA PayWay API if credentials are provided
         if (this.apiKey && this.apiKey !== 'aba_sandbox_api_key' && this.merchantId !== 'angkor_mall') {
-            try {
-                const response = await axios.post(
-                    `${this.apiUrl}/generate-qr`,
-                    {
-                        req_time: reqTime,
-                        merchant_id: this.merchantId,
-                        tran_id: tranId,
-                        amount: formattedAmount,
-                        items: itemsBase64,
-                        first_name: firstName,
-                        last_name: lastName,
-                        email: email,
-                        phone: phone,
-                        purchase_type: purchaseType,
-                        payment_option: paymentOption,
-                        callback_url: callbackUrl,
-                        return_deeplink: returnDeeplink,
-                        currency: curr,
-                        custom_fields: customFields,
-                        return_params: returnParams,
-                        payout: payout,
-                        lifetime: lifetime,
-                        qr_image_template: qrImageTemplate,
-                        hash: hash
-                    },
-                    {
+            const candidateUrls = [
+                `${this.baseUrl}/purchase`,
+                `${this.baseUrl}/generate-qr`,
+                this.rawApiUrl
+            ];
+
+            for (const targetUrl of [...new Set(candidateUrls)]) {
+                try {
+                    const response = await axios.post(targetUrl, payload, {
                         headers: { 'Content-Type': 'application/json' },
-                        timeout: 8000
+                        timeout: 10000
+                    });
+
+                    const resData = response.data;
+                    if (resData && (resData.status?.code === '00' || resData.status === 0 || resData.qr_string || resData.data?.qr_string)) {
+                        const qrString = resData.qr_string || resData.data?.qr_string;
+                        const md5Hash = resData.md5 || (qrString ? crypto.createHash('md5').update(qrString).digest('hex') : tranId);
+                        const abaDeepLink = resData.abapay_deeplink || resData.deeplink || resData.app_checkout_url || (qrString ? `aba://qr?qr=${encodeURIComponent(qrString)}` : '');
+                        const checkoutUrl = resData.checkout_url || resData.data?.checkout_url || '';
+
+                        return {
+                            success: true,
+                            provider: 'ABA_PAYWAY',
+                            tranId: tranId,
+                            reqTime: reqTime,
+                            qrString: qrString,
+                            qrImage: resData.qr_image || resData.data?.qr_image || null,
+                            md5: md5Hash,
+                            amount: parseFloat(formattedAmount),
+                            currency: curr,
+                            currencySymbol: curr === 'KHR' ? '៛' : '$',
+                            merchantName: this.storeLabel,
+                            abaDeepLink: abaDeepLink,
+                            checkoutUrl: checkoutUrl,
+                            expiresAt: expiresAt,
+                            validityMinutes: validityMinutes
+                        };
                     }
-                );
-
-                if (response.data && (response.data.status?.code === '00' || response.data.status === 0 || response.data.qr_string)) {
-                    const qrString = response.data.qr_string || response.data.data?.qr_string;
-                    const md5Hash = crypto.createHash('md5').update(qrString || tranId).digest('hex');
-                    const abaDeepLink = response.data.abapay_deeplink || response.data.deeplink || `aba://qr?qr=${encodeURIComponent(qrString)}`;
-
-                    return {
-                        success: true,
-                        provider: 'ABA_PAYWAY',
-                        tranId: tranId,
-                        reqTime: reqTime,
-                        qrString: qrString,
-                        qrImage: response.data.qr_image || null,
-                        md5: md5Hash,
-                        amount: parseFloat(formattedAmount),
-                        currency: curr,
-                        currencySymbol: curr === 'KHR' ? '៛' : '$',
-                        merchantName: this.storeLabel,
-                        abaDeepLink: abaDeepLink,
-                        expiresAt: expiresAt,
-                        validityMinutes: validityMinutes
-                    };
+                } catch (apiError) {
+                    console.warn(`ABA PayWay API [${targetUrl}] notice:`, apiError.response?.data || apiError.message);
                 }
-            } catch (apiError) {
-                console.warn('ABA PayWay API live call failed, using high-compatibility fallback:', apiError.response?.data || apiError.message);
             }
         }
 
-        // 2. High-Fidelity ABA KHQR generation fallback for sandbox and local environment
+        // 2. High-Fidelity ABA KHQR generation fallback for sandbox / local development
         let qrString = '';
         let md5Hash = '';
         try {
@@ -228,7 +250,7 @@ class AbaPaywayService {
     }
 
     /**
-     * Check transaction status with ABA PayWay (/check-transaction-2)
+     * Check transaction status with ABA PayWay (/check-transaction-2 or /check-transaction-status)
      */
     async checkTransactionStatus(tranId, reqTime = null) {
         if (!tranId) {
@@ -243,48 +265,51 @@ class AbaPaywayService {
         const hash = this.generateHash(rawHashString);
 
         if (this.apiKey && this.apiKey !== 'aba_sandbox_api_key' && this.merchantId !== 'angkor_mall') {
-            try {
-                const response = await axios.post(
-                    `${this.apiUrl}/check-transaction-2`,
-                    {
-                        req_time: time,
-                        merchant_id: this.merchantId,
-                        tran_id: cleanTranId,
-                        hash: hash
-                    },
-                    {
-                        headers: { 'Content-Type': 'application/json' },
-                        timeout: 8000
+            const checkEndpoints = [
+                `${this.baseUrl}/check-transaction-2`,
+                `${this.baseUrl}/check-transaction-status`,
+                `${this.baseUrl}/check-transaction`
+            ];
+
+            for (const endpoint of [...new Set(checkEndpoints)]) {
+                try {
+                    const response = await axios.post(
+                        endpoint,
+                        {
+                            req_time: time,
+                            merchant_id: this.merchantId,
+                            tran_id: cleanTranId,
+                            hash: hash
+                        },
+                        {
+                            headers: { 'Content-Type': 'application/json' },
+                            timeout: 8000
+                        }
+                    );
+
+                    const resData = response.data;
+                    const statusObj = resData?.status;
+                    const dataObj = resData?.data || {};
+
+                    if (dataObj.payment_status === 'APPROVED' || dataObj.payment_status_code === 0 || statusObj?.code === '00' || resData?.status === '0' || resData?.status === 0) {
+                        return {
+                            isPaid: true,
+                            transaction: dataObj,
+                            tranId: cleanTranId,
+                            amount: dataObj.amount,
+                            paymentMethod: dataObj.payment_type || 'ABA PayWay'
+                        };
                     }
-                );
 
-                const resData = response.data;
-                const statusObj = resData?.status;
-                const dataObj = resData?.data || {};
-
-                // ABA PayWay returns data.payment_status === 'APPROVED' or status.code === '00'
-                if (dataObj.payment_status === 'APPROVED' || dataObj.payment_status_code === 0 || statusObj?.code === '00') {
                     return {
-                        isPaid: true,
-                        transaction: dataObj,
-                        tranId: cleanTranId,
-                        amount: dataObj.amount,
-                        paymentMethod: dataObj.payment_type || 'ABA PayWay'
+                        isPaid: false,
+                        status: dataObj.payment_status || 'PENDING',
+                        statusCode: dataObj.payment_status_code,
+                        message: statusObj?.message || 'Awaiting ABA payment'
                     };
+                } catch (error) {
+                    console.warn(`ABA check status [${endpoint}] warning:`, error.response?.data || error.message);
                 }
-
-                return {
-                    isPaid: false,
-                    status: dataObj.payment_status || 'PENDING',
-                    statusCode: dataObj.payment_status_code,
-                    message: statusObj?.message || 'Awaiting ABA payment'
-                };
-            } catch (error) {
-                console.warn('ABA check-transaction API warning:', error.response?.data || error.message);
-                return {
-                    isPaid: false,
-                    error: error.response?.data?.description || error.message
-                };
             }
         }
 
