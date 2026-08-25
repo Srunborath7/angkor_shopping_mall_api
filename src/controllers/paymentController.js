@@ -1,9 +1,15 @@
-﻿const { Order, OrderItem, Product, ProductVariant, User, TradeProduct } = require('../models/relationships');
+const { Order, OrderItem, Product, ProductVariant, User, TradeProduct } = require('../models/relationships');
 const abaPaywayService = require('../services/abaPaywayService');
 const { successResponse, errorResponse } = require('../utils/response');
 const { bot } = require('../config/telegram');
 const { trackInteractionBulk } = require('../utils/trackInteraction');
 const { Op } = require('sequelize');
+
+// Helper to check for standard UUIDv4 format
+const isValidUUID = (str) => {
+    if (!str || typeof str !== 'string') return false;
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str);
+};
 
 class PaymentController {
     /**
@@ -18,7 +24,11 @@ class PaymentController {
             let order = null;
 
             if (targetOrderId) {
-                order = await Order.findByPk(targetOrderId, {
+                const isUUID = isValidUUID(targetOrderId);
+                const searchCriteria = isUUID ? { id: targetOrderId } : { payment_intent_id: targetOrderId };
+
+                order = await Order.findOne({
+                    where: searchCriteria,
                     include: [
                         {
                             model: OrderItem,
@@ -36,15 +46,17 @@ class PaymentController {
                     ]
                 });
 
-                if (!order) {
+                if (!order && isUUID) {
                     return errorResponse(res, 'Order not found', 404);
                 }
 
-                if (order.status === 'paid') {
+                if (order && order.status === 'paid') {
                     return errorResponse(res, 'This order has already been paid', 400);
                 }
 
-                finalAmount = parseFloat(order.total_amount);
+                if (order) {
+                    finalAmount = parseFloat(order.total_amount);
+                }
             }
 
             if (!finalAmount || isNaN(finalAmount) || finalAmount <= 0) {
@@ -112,31 +124,42 @@ class PaymentController {
     async checkABAStatus(req, res) {
         try {
             const { tran_id, md5 } = req.params;
-            const queryKey = tran_id || md5;
+            const queryKey = String(tran_id || md5 || '').trim();
 
             if (!queryKey) {
                 return errorResponse(res, 'Transaction ID or MD5 parameter is required', 400);
             }
 
-            // Find order by matching MD5 or matching payment_intent_id / tranId
-            const order = await Order.findOne({
-                where: {
-                    [Op.or]: [
-                        { khqr_md5: queryKey },
-                        { payment_intent_id: `ABA-${queryKey}` },
-                        { payment_intent_id: queryKey },
-                        { id: queryKey }
+            // Build safe PostgreSQL search conditions
+            const orConditions = [
+                { khqr_md5: queryKey },
+                { payment_intent_id: `ABA-${queryKey}` },
+                { payment_intent_id: queryKey },
+                { transaction_hash: queryKey },
+                { transaction_hash: `ABA-${queryKey}` }
+            ];
+
+            // Only add UUID search if queryKey matches UUID format to prevent Postgres syntax error
+            if (isValidUUID(queryKey)) {
+                orConditions.push({ id: queryKey });
+            }
+
+            let order = null;
+            try {
+                order = await Order.findOne({
+                    where: { [Op.or]: orConditions },
+                    include: [
+                        {
+                            model: OrderItem,
+                            as: 'items',
+                            include: [{ model: Product, as: 'product' }, { model: ProductVariant, as: 'variant' }]
+                        },
+                        { model: User, as: 'user', attributes: ['id', 'name', 'email', 'phone'] }
                     ]
-                },
-                include: [
-                    {
-                        model: OrderItem,
-                        as: 'items',
-                        include: [{ model: Product, as: 'product' }, { model: ProductVariant, as: 'variant' }]
-                    },
-                    { model: User, as: 'user', attributes: ['id', 'name', 'email', 'phone'] }
-                ]
-            });
+                });
+            } catch (dbErr) {
+                console.warn('DB Order query warning on checkABAStatus:', dbErr.message);
+            }
 
             if (order && order.status === 'paid') {
                 return successResponse(res, 'Payment already verified', {
@@ -151,7 +174,7 @@ class PaymentController {
             // Verify with ABA PayWay backend
             const abaCheck = await abaPaywayService.checkTransactionStatus(queryKey);
 
-            if (abaCheck.isPaid) {
+            if (abaCheck && abaCheck.isPaid) {
                 const txn = abaCheck.transaction || {};
                 const txnHash = txn.tran_id || queryKey;
 
@@ -185,12 +208,13 @@ class PaymentController {
                     try {
                         const chatId = process.env.TELEGRAM_CHAT_ID || process.env.CHAT_ID;
                         if (bot && chatId) {
+                            const orderDisplay = typeof order.id === 'string' ? order.id.slice(0, 8).toUpperCase() : order.id;
                             bot.sendMessage(
                                 chatId,
                                 `✨ *ABA PayWay Payment Received!*\n\n` +
-                                `📦 *Order:* \`#ORD-${order.id.slice(0, 8).toUpperCase()}\`\n` +
+                                `📦 *Order:* \`#ORD-${orderDisplay}\`\n` +
                                 `💰 *Amount:* $${parseFloat(order.total_amount).toFixed(2)}\n` +
-                                `👤 *Customer:* ${order.user?.name || 'Customer'} (${order.contact_phone})\n` +
+                                `👤 *Customer:* ${order.user?.name || 'Customer'} (${order.contact_phone || 'N/A'})\n` +
                                 `🏦 *Method:* ABA PayWay / KHQR\n` +
                                 `🔑 *ABA Tran ID:* \`${txnHash}\``,
                                 { parse_mode: 'Markdown' }
@@ -228,23 +252,28 @@ class PaymentController {
         try {
             const { md5, tran_id, tranId, order_id, orderId } = req.body;
             const targetId = order_id || orderId;
-            const targetKey = tran_id || tranId || md5;
+            const targetKey = String(tran_id || tranId || md5 || '').trim();
 
-            let whereCondition = {};
-            if (targetId) {
-                whereCondition.id = targetId;
+            let whereCondition = null;
+
+            if (targetId && isValidUUID(targetId)) {
+                whereCondition = { id: targetId };
             } else if (targetKey) {
-                whereCondition = {
-                    [Op.or]: [
-                        { khqr_md5: targetKey },
-                        { payment_intent_id: `ABA-${targetKey}` },
-                        { payment_intent_id: targetKey }
-                    ]
-                };
+                const orConds = [
+                    { khqr_md5: targetKey },
+                    { payment_intent_id: `ABA-${targetKey}` },
+                    { payment_intent_id: targetKey },
+                    { transaction_hash: targetKey },
+                    { transaction_hash: `ABA-${targetKey}` }
+                ];
+                if (isValidUUID(targetKey)) {
+                    orConds.push({ id: targetKey });
+                }
+                whereCondition = { [Op.or]: orConds };
             }
 
-            if (Object.keys(whereCondition).length === 0) {
-                return errorResponse(res, 'Either tran_id, md5, or order_id is required to simulate payment', 400);
+            if (!whereCondition) {
+                return errorResponse(res, 'Either a valid order_id, tran_id, or md5 is required to simulate payment', 400);
             }
 
             const order = await Order.findOne({
@@ -260,7 +289,7 @@ class PaymentController {
             });
 
             if (!order) {
-                return errorResponse(res, 'Order not found', 404);
+                return errorResponse(res, 'Order not found for simulation', 404);
             }
 
             const mockTxnHash = `ABA-SIM-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -293,10 +322,11 @@ class PaymentController {
             try {
                 const chatId = process.env.TELEGRAM_CHAT_ID || process.env.CHAT_ID;
                 if (bot && chatId) {
+                    const orderDisplay = typeof order.id === 'string' ? order.id.slice(0, 8).toUpperCase() : order.id;
                     bot.sendMessage(
                         chatId,
                         `⚡ *[TEST SIMULATION] ABA PayWay Confirmed!*\n\n` +
-                        `📦 *Order:* \`#ORD-${order.id.slice(0, 8).toUpperCase()}\`\n` +
+                        `📦 *Order:* \`#ORD-${orderDisplay}\`\n` +
                         `💰 *Amount:* $${parseFloat(order.total_amount).toFixed(2)}\n` +
                         `🏦 *Method:* ABA PayWay (Simulated)\n` +
                         `🔑 *Txn Hash:* \`${mockTxnHash}\``,

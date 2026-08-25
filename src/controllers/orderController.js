@@ -3,6 +3,29 @@ const { successResponse, errorResponse } = require('../utils/response');
 const paymentService = require('../services/paymentService');
 const { bot } = require('../config/telegram');
 const { trackInteractionBulk } = require('../utils/trackInteraction');
+const { Op } = require('sequelize');
+
+const isValidUUID = (str) => {
+    if (!str || typeof str !== 'string') return false;
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str);
+};
+
+const buildOrderSearchCondition = (idOrKey) => {
+    if (!idOrKey) return null;
+    const cleanKey = String(idOrKey).trim();
+    if (isValidUUID(cleanKey)) {
+        return { id: cleanKey };
+    }
+    return {
+        [Op.or]: [
+            { khqr_md5: cleanKey },
+            { payment_intent_id: `ABA-${cleanKey}` },
+            { payment_intent_id: cleanKey },
+            { transaction_hash: cleanKey },
+            { transaction_hash: `ABA-${cleanKey}` }
+        ]
+    };
+};
 
 // Helper to build the standard OrderItem includes (product + variant + images)
 const orderItemIncludes = () => [
@@ -221,8 +244,12 @@ class OrderController {
     async getOrderById(req, res) {
         try {
             const { id } = req.params;
+            const searchCondition = buildOrderSearchCondition(id);
+            if (!searchCondition) {
+                return errorResponse(res, 'Order not found', 404);
+            }
             const order = await Order.findOne({
-                where: { id },
+                where: searchCondition,
                 include: [
                     {
                         model: OrderItem,
@@ -510,8 +537,12 @@ class OrderController {
     async getCheckoutInfo(req, res) {
         try {
             const { id } = req.params;
+            const searchCondition = buildOrderSearchCondition(id);
+            if (!searchCondition) {
+                return errorResponse(res, 'Order not found', 404);
+            }
             const order = await Order.findOne({
-                where: { id },
+                where: searchCondition,
                 include: [
                     {
                         model: OrderItem,
