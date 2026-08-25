@@ -20,12 +20,12 @@ class AbaPaywayService {
      */
     getReqTime() {
         const now = new Date();
-        const y = now.getFullYear();
-        const m = String(now.getMonth() + 1).padStart(2, '0');
-        const d = String(now.getDate()).padStart(2, '0');
-        const h = String(now.getHours()).padStart(2, '0');
-        const min = String(now.getMinutes()).padStart(2, '0');
-        const s = String(now.getSeconds()).padStart(2, '0');
+        const y = now.getUTCFullYear();
+        const m = String(now.getUTCMonth() + 1).padStart(2, '0');
+        const d = String(now.getUTCDate()).padStart(2, '0');
+        const h = String(now.getUTCHours()).padStart(2, '0');
+        const min = String(now.getUTCMinutes()).padStart(2, '0');
+        const s = String(now.getUTCSeconds()).padStart(2, '0');
         return `${y}${m}${d}${h}${min}${s}`;
     }
 
@@ -33,20 +33,23 @@ class AbaPaywayService {
      * Generate HMAC-SHA512 hash in Base64 or RSA signature for ABA PayWay request signing
      */
     generateHash(rawString) {
-        if (this.rsaPrivateKey && this.rsaPrivateKey.includes('BEGIN')) {
+        if (this.rsaPrivateKey && this.rsaPrivateKey.includes('BEGIN') && this.rsaPrivateKey.length > 200) {
             try {
                 const sign = crypto.createSign('SHA512');
                 sign.update(rawString);
                 sign.end();
                 return sign.sign(this.rsaPrivateKey, 'base64');
             } catch (rsaErr) {
-                console.warn('RSA signing error, falling back to HMAC-SHA512:', rsaErr.message);
+                // Fall back to HMAC-SHA512
             }
         }
-        return crypto
-            .createHmac('sha512', this.apiKey)
-            .update(rawString)
-            .digest('base64');
+        if (this.apiKey) {
+            return crypto
+                .createHmac('sha512', this.apiKey)
+                .update(rawString)
+                .digest('base64');
+        }
+        return '';
     }
 
     /**
@@ -267,7 +270,6 @@ class AbaPaywayService {
         if (this.apiKey && this.apiKey !== 'aba_sandbox_api_key' && this.merchantId !== 'angkor_mall') {
             const checkEndpoints = [
                 `${this.baseUrl}/check-transaction-2`,
-                `${this.baseUrl}/check-transaction-status`,
                 `${this.baseUrl}/check-transaction`
             ];
 
