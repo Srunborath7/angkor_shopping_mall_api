@@ -61,7 +61,7 @@ class UserService {
             include: [{
                 model: Role,
                 as: 'roles',
-                attributes: ['id', 'name'],
+                attributes: ['id', 'name', 'permissions'],
                 through: { attributes: [] }
             }]
         });
@@ -73,7 +73,7 @@ class UserService {
             include: [{
                 model: Role,
                 as: 'roles',
-                attributes: ['id', 'name'],
+                attributes: ['id', 'name', 'permissions'],
                 through: { attributes: [] }
             }]
         });
@@ -84,7 +84,7 @@ class UserService {
             include: [{
                 model: Role,
                 as: 'roles',
-                attributes: ['id', 'name'],
+                attributes: ['id', 'name', 'permissions'],
                 through: { attributes: [] }
             }]
         });
@@ -180,7 +180,7 @@ class UserService {
             include: [{
                 model: Role,
                 as: 'roles',
-                attributes: ['id', 'name'],
+                attributes: ['id', 'name', 'permissions'],
                 through: { attributes: [] }
             }]
         });
@@ -206,7 +206,7 @@ class UserService {
                 include: [{
                     model: Role,
                     as: 'roles',
-                    attributes: ['id', 'name'],
+                    attributes: ['id', 'name', 'permissions'],
                     through: { attributes: [] }
                 }]
             });
@@ -240,7 +240,7 @@ class UserService {
             include: [{
                 model: Role,
                 as: 'roles',
-                attributes: ['id', 'name'],
+                attributes: ['id', 'name', 'permissions'],
                 through: { attributes: [] }
             }]
         });
@@ -299,7 +299,7 @@ class UserService {
             include: [{
                 model: Role,
                 as: 'roles',
-                attributes: ['id', 'name'],
+                attributes: ['id', 'name', 'permissions'],
                 through: { attributes: [] }
             }]
         });
@@ -574,7 +574,7 @@ class UserService {
                     where: {
                         name: { [Op.ne]: 'customer' }
                     },
-                    attributes: ["id", "name"],
+                    attributes: ["id", "name", "permissions"],
                     through: {
                         attributes: [],
                     },
@@ -593,7 +593,7 @@ class UserService {
                     where: {
                         name: "customer",
                     },
-                    attributes: ["id", "name"],
+                    attributes: ["id", "name", "permissions"],
                     through: {
                         attributes: [],
                     },

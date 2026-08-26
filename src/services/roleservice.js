@@ -7,7 +7,8 @@ class RoleService {
       throw new Error('Role name is required');
     }
     const description = (data.description || data.desc || '').trim() || null;
-    return await Role.create({ name, description });
+    const permissions = data.permissions || {};
+    return await Role.create({ name, description, permissions });
   }
 
   async getAllRoles() {
@@ -29,7 +30,17 @@ class RoleService {
       throw new Error('Role not found');
     }
 
-    await role.update(data);
+    const updateData = {};
+    if (data.name !== undefined) updateData.name = String(data.name).trim();
+    if (data.description !== undefined) updateData.description = data.description;
+    if (data.desc !== undefined) updateData.description = data.desc;
+    if (data.permissions !== undefined) {
+      updateData.permissions = typeof data.permissions === 'string'
+        ? JSON.parse(data.permissions)
+        : data.permissions;
+    }
+
+    await role.update(updateData);
 
     return role;
   }
