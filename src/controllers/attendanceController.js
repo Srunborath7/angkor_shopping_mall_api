@@ -307,10 +307,18 @@ exports.getAllAttendance = async (req, res) => {
  */
 exports.getAttendanceKPIs = async (req, res) => {
   try {
-    const targetDate = req.query.date || new Date().toISOString().split("T")[0];
-    const dayRecords = memoryAttendanceStore.filter((r) => r.date === targetDate);
+    let totalStaff = 0;
+    try {
+      const UserModel = require("../models/User");
+      if (UserModel && UserModel.count) {
+        totalStaff = await UserModel.count();
+      }
+    } catch (e) {}
 
-    const totalStaff = 8;
+    if (!totalStaff || totalStaff === 0) {
+      totalStaff = 8;
+    }
+
     const presentCount = dayRecords.filter((r) => ["Present", "On Shift", "On Break", "Late", "Checked Out"].includes(r.status)).length;
     const onTimeCount = dayRecords.filter((r) => r.checkInStatus === "On Time").length;
     const lateCount = dayRecords.filter((r) => r.checkInStatus === "Late").length;
