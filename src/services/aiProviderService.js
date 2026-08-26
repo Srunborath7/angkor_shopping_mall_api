@@ -5,6 +5,7 @@ class AIProviderService {
         this.openaiApiKey = process.env.OPENAI_API_KEY || null;
         this.openaiModel = process.env.OPENAI_MODEL || 'gpt-4o-mini';
         this.geminiApiKey = process.env.GEMINI_API_KEY || null;
+        this.geminiModel = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
     }
 
     isAIAvailable() {
@@ -42,7 +43,12 @@ class AIProviderService {
             const reply = response.data?.choices?.[0]?.message?.content;
             return reply ? reply.trim() : null;
         } catch (error) {
-            console.error('[AIProviderService] OpenAI API Error:', error.response?.data || error.message);
+            const errData = error.response?.data?.error || error.response?.data || error.message;
+            if (errData?.code === 'insufficient_quota' || errData?.type === 'insufficient_quota') {
+                console.warn('[AIProviderService] OpenAI Quota Exceeded (insufficient_quota). Falling back to Gemini or default engine.');
+            } else {
+                console.warn('[AIProviderService] OpenAI API Error:', errData?.message || errData || error.message);
+            }
             return null;
         }
     }
@@ -54,9 +60,11 @@ class AIProviderService {
         const apiKey = process.env.GEMINI_API_KEY || this.geminiApiKey;
         if (!apiKey) return null;
 
+        const model = options.model || process.env.GEMINI_MODEL || this.geminiModel || 'gemini-1.5-flash';
+
         try {
             const response = await axios.post(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+                `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
                 {
                     contents: [
                         {
@@ -73,9 +81,70 @@ class AIProviderService {
             const candidate = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
             return candidate ? candidate.trim() : null;
         } catch (err) {
-            console.error('[AIProviderService] Gemini API Error:', err.response?.data || err.message);
+            console.warn('[AIProviderService] Gemini API Error:', err.response?.data?.error?.message || err.message);
             return null;
         }
+    }
+
+    /**
+     * Analyze Customer Support Inquiry (Sentiment & Summary)
+     * @param {string} messageText
+     */
+    async analyzeInquiry(messageText = '') {
+        const text = (messageText || '').trim();
+        if (!text) {
+            return { sentiment: 'neutral', summary: 'Empty message' };
+        }
+
+        // Try AI first
+        if (this.isAIAvailable()) {
+            const prompt = `Analyze the following customer support message from an e-commerce store.
+Message: "${text}"
+
+Respond in exact JSON format ONLY:
+{
+  "sentiment": "positive" | "negative" | "neutral" | "urgent",
+  "summary": "Short 1-sentence summary of customer issue"
+}`;
+
+            try {
+                let aiResult = await this.callOpenAI([
+                    { role: 'system', content: 'You are a customer support analyzer. Output only valid JSON.' },
+                    { role: 'user', content: prompt }
+                ], { temperature: 0.1 });
+
+                if (!aiResult && process.env.GEMINI_API_KEY) {
+                    aiResult = await this.callGemini(prompt);
+                }
+
+                if (aiResult) {
+                    const cleanJson = aiResult.replace(/```json|```/g, '').trim();
+                    const parsed = JSON.parse(cleanJson);
+                    return {
+                        sentiment: ['positive', 'negative', 'neutral', 'urgent'].includes(parsed.sentiment) ? parsed.sentiment : 'neutral',
+                        summary: parsed.summary || text.slice(0, 100)
+                    };
+                }
+            } catch (e) {
+                // Ignore and fall back to heuristic
+            }
+        }
+
+        // Heuristic Rule-Based Fallback
+        const lower = text.toLowerCase();
+        let sentiment = 'neutral';
+        if (lower.includes('urgent') || lower.includes('broken') || lower.includes('scam') || lower.includes('fraud') || lower.includes('refund immediately')) {
+            sentiment = 'urgent';
+        } else if (lower.includes('bad') || lower.includes('wrong') || lower.includes('delay') || lower.includes('missing') || lower.includes('cancel') || lower.includes('fail')) {
+            sentiment = 'negative';
+        } else if (lower.includes('thank') || lower.includes('great') || lower.includes('love') || lower.includes('good') || lower.includes('awesome') || lower.includes('best')) {
+            sentiment = 'positive';
+        }
+
+        return {
+            sentiment,
+            summary: text.length > 80 ? text.slice(0, 80) + '...' : text
+        };
     }
 
     /**
@@ -85,7 +154,6 @@ class AIProviderService {
      */
     async generateChatbotAIResponse(userMessage, storeContext = {}) {
         const customerName = storeContext.customerName || 'Valued Customer';
-        const lang = storeContext.language === 'km' ? 'Khmer (ភាសាខ្មែរ)' : 'English';
         const isKhmer = storeContext.language === 'km' || /[\u1780-\u17FF]/.test(userMessage);
 
         const systemPrompt = `You are the official smart AI shopping assistant for "Angkor Shopping Mall" (Cambodia's premier electronics & tech shopping platform).
@@ -93,7 +161,7 @@ class AIProviderService {
 Customer Profile:
 - Name: ${customerName}
 - Status: ${storeContext.customerName ? 'Logged-in Member' : 'Guest Visitor'}
-- Target Response Language: ${isKhmer ? 'Khmer (ភាសាខ្មែរ) with natural polite Cambodian tone' : 'English with friendly, professional tone'}
+- Target Response Language: ${isKhmer ? 'Khmer with natural polite Cambodian tone' : 'English with friendly, professional tone'}
 
 Store Information:
 - Location: Phnom Penh Central, Cambodia
@@ -112,7 +180,7 @@ ${JSON.stringify({
 
 Instructions:
 1. Greet the customer warmly using their name (${customerName}) whenever appropriate.
-2. If the user asks in Khmer or your target language is Khmer, ALWAYS answer in fluent, natural Khmer (ភាសាខ្មែរ). If in English, answer in English.
+2. If the user asks in Khmer or your target language is Khmer, ALWAYS answer in fluent, natural Khmer. If in English, answer in English.
 3. If they ask about products, recommend specific items from the database context with prices in USD ($).
 4. If they ask about their orders, give them exact status details from their order history context.
 5. Use clean markdown formatting (bolding, bullet points) with modern emojis.
@@ -159,7 +227,11 @@ Write the complete draft message for the admin to review and send directly:`;
             { role: 'user', content: `Please write a response to this customer inquiry: "${customerMessage}"` }
         ];
 
-        const aiResponse = await this.callOpenAI(messages, { temperature: 0.6 });
+        let aiResponse = await this.callOpenAI(messages, { temperature: 0.6 });
+
+        if (!aiResponse && process.env.GEMINI_API_KEY) {
+            aiResponse = await this.callGemini(`${systemPrompt}\n\nCustomer inquiry: "${customerMessage}"`);
+        }
 
         if (aiResponse) {
             return aiResponse;

@@ -62,6 +62,7 @@ const tradeProductRoutes = require("./routes/tradeProductRoute");
 const tradeOfferRoutes = require("./routes/tradeOfferRoute");
 const chatbotRoutes = require("./routes/chatbotRoute");
 const supportRoutes = require("./routes/supportMessageRoute");
+const attendanceRoutes = require("./routes/attendanceRoute");
 
 app.get("/", (req, res) => {
     res.status(200).json({
@@ -97,6 +98,7 @@ app.use("/api/trade-products", tradeProductRoutes);
 app.use("/api/trade-offers", tradeOfferRoutes);
 app.use("/api/chatbot", chatbotRoutes);
 app.use("/api/support", supportRoutes);
+app.use("/api/attendance", attendanceRoutes);
 
 app.use("/api", productVariantRoutes);
 app.use("/api", productDetailRoutes);

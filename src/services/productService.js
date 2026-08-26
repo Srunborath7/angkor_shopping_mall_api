@@ -1,5 +1,5 @@
 const sequelize = require('../config/db');
-const { Product, ProductVariant, ProductDetail, ProductImage, Category, Brand, ProductReview, User } = require('../models/relationships');
+const { Product, ProductVariant, ProductDetail, ProductImage, Category, Brand, ProductReview, User, Order, OrderItem } = require('../models/relationships');
 const { Op } = require('sequelize');
 
 class ProductService {
