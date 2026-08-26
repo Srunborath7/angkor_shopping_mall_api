@@ -1,9 +1,12 @@
 let AttendanceModel;
 try {
   AttendanceModel = require("../models/Attendance");
-} catch (e) {
-  // Graceful fallback if model not loaded
-}
+} catch (e) {}
+
+let LeaveRequestModel;
+try {
+  LeaveRequestModel = require("../models/LeaveRequest");
+} catch (e) {}
 
 let UserModel;
 try {
@@ -26,17 +29,38 @@ let memoryLeaveStore = [
     role: "Lead Cashier",
     avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150",
     leaveType: "Sick Leave",
-    leaveTypeKh: "ច្បាប់ឈឺ",
+    leaveTypeKh: "ច្បាប់ឈឺ (Sick Leave)",
     startDate: new Date().toISOString().split("T")[0],
     endDate: new Date().toISOString().split("T")[0],
-    daysCount: 1,
-    reason: "High fever and medical checkup required",
+    durationDays: 1,
+    reason: "Doctor appointment and severe fever",
     contactNumber: "+855 12 888 999",
     status: "Pending",
-    appliedAt: new Date().toISOString(),
+    requestDate: new Date().toISOString().split("T")[0],
     reviewedBy: null,
-    reviewedAt: null,
-    rejectionReason: null
+    reviewNotes: null,
+    reviewDate: null
+  },
+  {
+    id: "LV-2026-002",
+    employeeId: "EMP-104",
+    employeeName: "Bopha Khem",
+    khmerName: "ខែម បុប្ផា",
+    department: "Sales",
+    role: "Sales Associate",
+    avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150",
+    leaveType: "Annual Leave",
+    leaveTypeKh: "ច្បាប់ប្រចាំឆ្នាំ (Annual Leave)",
+    startDate: new Date(Date.now() + 86400000).toISOString().split("T")[0],
+    endDate: new Date(Date.now() + 172800000).toISOString().split("T")[0],
+    durationDays: 2,
+    reason: "Family trip and personal errands",
+    contactNumber: "+855 77 123 456",
+    status: "Pending",
+    requestDate: new Date().toISOString().split("T")[0],
+    reviewedBy: null,
+    reviewNotes: null,
+    reviewDate: null
   }
 ];
 
@@ -184,7 +208,7 @@ exports.checkIn = async (req, res) => {
       }
     }
 
-    // Always update memory store
+    // Update memory store
     const existingIdx = memoryAttendanceStore.findIndex(r => r.employeeId === finalEmpId && r.date === todayStr);
     if (existingIdx >= 0) {
       memoryAttendanceStore[existingIdx] = newRecord;
@@ -382,8 +406,6 @@ exports.getAllAttendance = async (req, res) => {
         const dbList = await AttendanceModel.findAll({ order: [["createdAt", "DESC"]] });
         if (dbList && dbList.length > 0) {
           const dbRecords = dbList.map((item) => (item.toJSON ? item.toJSON() : item));
-          
-          // Merge db and memory ensuring no duplicates
           const seenIds = new Set();
           const merged = [];
           for (const item of [...memoryAttendanceStore, ...dbRecords]) {
@@ -492,6 +514,16 @@ exports.getAttendanceKPIs = async (req, res) => {
       } catch (e) {}
     }
 
+    let leaves = [...memoryLeaveStore];
+    if (LeaveRequestModel && LeaveRequestModel.findAll) {
+      try {
+        const dbLeaves = await LeaveRequestModel.findAll();
+        if (dbLeaves && dbLeaves.length > 0) {
+          leaves = dbLeaves.map(l => (l.toJSON ? l.toJSON() : l));
+        }
+      } catch (e) {}
+    }
+
     const dayRecords = allRecs.filter((r) => r.date === targetDate);
 
     const presentCount = dayRecords.filter((r) => ["Present", "On Shift", "On Break", "Late", "Checked Out"].includes(r.status)).length;
@@ -499,7 +531,7 @@ exports.getAttendanceKPIs = async (req, res) => {
     const lateCount = dayRecords.filter((r) => r.checkInStatus === "Late").length;
     const onBreakCount = dayRecords.filter((r) => r.breakStatus === "On Break" || r.status === "On Break").length;
     const checkedOutCount = dayRecords.filter((r) => r.status === "Checked Out" || !!r.checkOutTime).length;
-    const onLeaveCount = memoryLeaveStore.filter((l) => l.status === "Approved" && l.startDate <= targetDate && l.endDate >= targetDate).length;
+    const onLeaveCount = leaves.filter((l) => l.status === "Approved" && l.startDate <= targetDate && l.endDate >= targetDate).length;
 
     const totalHoursWorked = dayRecords.reduce((acc, r) => acc + (Number(r.totalWorkHours) || 0), 0);
     const totalOvertimeHours = dayRecords.reduce((acc, r) => acc + (Number(r.overtimeHours) || 0), 0);
@@ -613,15 +645,32 @@ exports.deleteRecord = async (req, res) => {
 };
 
 /**
- * 9. Leave Requests (Ask Permission)
+ * 9. Leave Requests (Ask Permission & Management with Database Persistence)
  * GET /api/attendance/leave-requests
  */
 exports.getLeaveRequests = async (req, res) => {
   try {
+    let leavesList = [...memoryLeaveStore];
+
+    if (LeaveRequestModel && LeaveRequestModel.findAll) {
+      try {
+        const dbLeaves = await LeaveRequestModel.findAll({ order: [["createdAt", "DESC"]] });
+        if (dbLeaves && dbLeaves.length > 0) {
+          const dbList = dbLeaves.map((item) => (item.toJSON ? item.toJSON() : item));
+          const seen = new Set();
+          leavesList = [...dbList, ...memoryLeaveStore].filter(l => {
+            if (seen.has(l.id)) return false;
+            seen.add(l.id);
+            return true;
+          });
+        }
+      } catch (e) {}
+    }
+
     return res.status(200).json({
       success: true,
-      count: memoryLeaveStore.length,
-      data: memoryLeaveStore
+      count: leavesList.length,
+      data: leavesList
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -636,13 +685,23 @@ exports.createLeaveRequest = async (req, res) => {
     const newLeave = {
       id: "LV-" + Date.now(),
       status: "Pending",
-      appliedAt: new Date().toISOString(),
+      requestDate: req.body.requestDate || new Date().toISOString().split("T")[0],
+      durationDays: Number(req.body.durationDays || req.body.duration_days || 1),
       ...req.body
     };
+
+    if (LeaveRequestModel && LeaveRequestModel.create) {
+      try {
+        await LeaveRequestModel.create(newLeave);
+      } catch (e) {
+        console.warn("DB create leave fallback:", e.message);
+      }
+    }
+
     memoryLeaveStore.unshift(newLeave);
     return res.status(201).json({
       success: true,
-      message: "Leave request submitted",
+      message: "Leave request submitted successfully",
       data: newLeave,
       leaveRequest: newLeave
     });
@@ -657,17 +716,75 @@ exports.createLeaveRequest = async (req, res) => {
 exports.updateLeaveRequest = async (req, res) => {
   try {
     const { id } = req.params;
-    const idx = memoryLeaveStore.findIndex((l) => l.id === id);
-    if (idx === -1) {
+    let leave = memoryLeaveStore.find((l) => l.id === id);
+
+    if (LeaveRequestModel && LeaveRequestModel.findByPk) {
+      try {
+        const dbRec = await LeaveRequestModel.findByPk(id);
+        if (dbRec) leave = dbRec.toJSON ? dbRec.toJSON() : dbRec;
+      } catch (e) {}
+    }
+
+    if (!leave) {
       return res.status(404).json({ success: false, message: "Leave request not found" });
     }
 
-    memoryLeaveStore[idx] = { ...memoryLeaveStore[idx], ...req.body };
+    const updatedLeave = {
+      ...leave,
+      ...req.body,
+      reviewDate: req.body.reviewDate || new Date().toISOString().split("T")[0]
+    };
+
+    if (LeaveRequestModel && LeaveRequestModel.update) {
+      try {
+        await LeaveRequestModel.update(updatedLeave, { where: { id } });
+      } catch (e) {}
+    }
+
+    const idx = memoryLeaveStore.findIndex((l) => l.id === id);
+    if (idx !== -1) {
+      memoryLeaveStore[idx] = updatedLeave;
+    } else {
+      memoryLeaveStore.unshift(updatedLeave);
+    }
+
+    // If approved and covers today, sync attendance record
+    if (updatedLeave.status === "Approved") {
+      const todayStr = new Date().toISOString().split("T")[0];
+      if (updatedLeave.startDate <= todayStr && updatedLeave.endDate >= todayStr) {
+        const leaveAttRecord = {
+          id: "ATT-LV-" + Date.now(),
+          employeeId: updatedLeave.employeeId,
+          employeeName: updatedLeave.employeeName,
+          khmerName: updatedLeave.khmerName || "",
+          department: updatedLeave.department || "Store Operations",
+          role: updatedLeave.role || "Staff Member",
+          avatar: updatedLeave.avatar,
+          date: todayStr,
+          shiftId: "shift_morning",
+          shiftName: "Scheduled (On Leave)",
+          checkInTime: "--:--:--",
+          checkInStatus: "On Leave",
+          lateMinutes: 0,
+          checkInMethod: "Leave Permission",
+          status: "On Leave",
+          notes: `Approved Leave: ${updatedLeave.leaveType} (${updatedLeave.reason || ""})`
+        };
+
+        if (AttendanceModel && AttendanceModel.create) {
+          try {
+            await AttendanceModel.create(leaveAttRecord);
+          } catch (e) {}
+        }
+        memoryAttendanceStore.unshift(leaveAttRecord);
+      }
+    }
+
     return res.status(200).json({
       success: true,
-      message: "Leave request updated",
-      data: memoryLeaveStore[idx],
-      leaveRequest: memoryLeaveStore[idx]
+      message: "Leave request updated successfully",
+      data: updatedLeave,
+      leaveRequest: updatedLeave
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -680,8 +797,15 @@ exports.updateLeaveRequest = async (req, res) => {
 exports.deleteLeaveRequest = async (req, res) => {
   try {
     const { id } = req.params;
+
+    if (LeaveRequestModel && LeaveRequestModel.destroy) {
+      try {
+        await LeaveRequestModel.destroy({ where: { id } });
+      } catch (e) {}
+    }
+
     memoryLeaveStore = memoryLeaveStore.filter((l) => l.id !== id);
-    return res.status(200).json({ success: true, message: "Leave request deleted" });
+    return res.status(200).json({ success: true, message: "Leave request deleted successfully" });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }

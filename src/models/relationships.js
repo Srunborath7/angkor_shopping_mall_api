@@ -1,3 +1,5 @@
+const LeaveRequest = require('./LeaveRequest');
+const Attendance = require('./Attendance');
 const User = require('./userModel');
 const Role = require('./roleModel');
 const UserRole = require('./userRoleModel');
