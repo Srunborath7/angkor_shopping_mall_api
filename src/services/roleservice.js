@@ -2,11 +2,20 @@ const Role = require('../models/roleModel');
 
 class RoleService {
   async createRole(data) {
-    return await Role.create(data);
+    const name = (data.name || '').trim();
+    if (!name) {
+      throw new Error('Role name is required');
+    }
+    const description = (data.description || data.desc || '').trim() || null;
+    return await Role.create({ name, description });
   }
 
   async getAllRoles() {
-    return await Role.findAll();
+    try {
+      return await Role.findAll({ order: [['created_at', 'DESC']] });
+    } catch (e) {
+      return await Role.findAll();
+    }
   }
 
   async getRoleById(id) {

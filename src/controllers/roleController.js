@@ -13,10 +13,11 @@ class RoleController {
             return successResponse(
                 res,
                 'Role created successfully',
-                role
+                role,
+                201
             );
         } catch (error) {
-            return errorResponse(res, error.message);
+            return errorResponse(res, error.message, 400);
         }
     }
 
@@ -39,7 +40,7 @@ class RoleController {
             const role = await roleService.getRoleById(req.params.id);
 
             if (!role) {
-                return errorResponse(res, 'Role not found');
+                return errorResponse(res, 'Role not found', 404);
             }
 
             return successResponse(
