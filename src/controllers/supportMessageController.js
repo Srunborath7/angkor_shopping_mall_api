@@ -101,6 +101,8 @@ class SupportMessageController {
             }
 
             const { count, rows } = await SupportMessage.findAndCountAll({
+                distinct: true,
+                subQuery: false,
                 where,
                 include: [
                     {
