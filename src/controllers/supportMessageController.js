@@ -100,29 +100,30 @@ class SupportMessageController {
                 ];
             }
 
-            const { count, rows } = await SupportMessage.findAndCountAll({
-                distinct: true,
-                subQuery: false,
-                where,
-                include: [
-                    {
-                        model: User,
-                        as: 'user',
-                        attributes: ['id', 'name', 'email', 'phone']
-                    },
-                    {
-                        model: User,
-                        as: 'admin',
-                        attributes: ['id', 'name', 'email']
-                    }
-                ],
-                order: [
-                    ['status', 'ASC'], // 'unread' first
-                    ['created_at', 'DESC']
-                ],
-                limit: parseInt(limit),
-                offset: parseInt(offset)
-            });
+            const [count, rows] = await Promise.all([
+                SupportMessage.count({ where }),
+                SupportMessage.findAll({
+                    where,
+                    include: [
+                        {
+                            model: User,
+                            as: 'user',
+                            attributes: ['id', 'name', 'email', 'phone']
+                        },
+                        {
+                            model: User,
+                            as: 'admin',
+                            attributes: ['id', 'name', 'email']
+                        }
+                    ],
+                    order: [
+                        ['status', 'ASC'], // 'unread' first
+                        ['created_at', 'DESC']
+                    ],
+                    limit: parseInt(limit),
+                    offset: parseInt(offset)
+                })
+            ]);
 
             return successResponse(res, 'Support messages retrieved successfully', {
                 total: count,
