@@ -3,6 +3,8 @@ const Attendance = require('./Attendance');
 const User = require('./userModel');
 const Role = require('./roleModel');
 const UserRole = require('./userRoleModel');
+const Permission = require('./permissionModel');
+const RolePermission = require('./rolePermissionModel');
 const RefreshToken = require('./refreshTokenModel');
 const Product = require('./productModel');
 const Category = require('./categoryModel');
@@ -23,6 +25,7 @@ const TradeProduct = require('./tradeProductModel');
 const TradeProductImage = require('./tradeProductImageModel');
 const TradeOffer = require('./tradeOfferModel');
 const SupportMessage = require('./supportMessageModel');
+
 // User & Role Associations
 User.belongsToMany(Role, {
     through: UserRole,
@@ -37,6 +40,27 @@ Role.belongsToMany(User, {
     otherKey: 'user_id',
     as: 'users'
 });
+
+// Role & Permission Associations
+Role.belongsToMany(Permission, {
+    through: RolePermission,
+    foreignKey: 'role_id',
+    otherKey: 'permission_id',
+    as: 'permissions'
+});
+
+Permission.belongsToMany(Role, {
+    through: RolePermission,
+    foreignKey: 'permission_id',
+    otherKey: 'role_id',
+    as: 'roles'
+});
+
+Role.hasMany(RolePermission, { foreignKey: 'role_id', as: 'rolePermissions', onDelete: 'CASCADE' });
+RolePermission.belongsTo(Role, { foreignKey: 'role_id', as: 'role' });
+
+Permission.hasMany(RolePermission, { foreignKey: 'permission_id', as: 'rolePermissions', onDelete: 'CASCADE' });
+RolePermission.belongsTo(Permission, { foreignKey: 'permission_id', as: 'permission' });
 
 User.hasMany(RefreshToken, {
     foreignKey: 'user_id',
@@ -225,5 +249,7 @@ module.exports = {
     TradeProduct,
     TradeProductImage,
     TradeOffer,
-    SupportMessage
+    SupportMessage,
+    Permission,
+    RolePermission
 };

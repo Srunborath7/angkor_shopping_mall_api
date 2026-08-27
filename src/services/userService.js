@@ -5,6 +5,7 @@ const { Op } = require('sequelize');
 
 const User = require('../models/userModel');
 const Role = require('../models/roleModel');
+const Permission = require('../models/permissionModel');
 const RefreshToken = require('../models/refreshTokenModel');
 const Otp = require('../models/otpModel');
 
@@ -18,7 +19,55 @@ const {
 } = require('../utils/jwt');
 const { sendOtpEmail } = require('../utils/mailer');
 
+const getRoleInclude = (whereClause = null) => {
+    const roleInclude = {
+        model: Role,
+        as: 'roles',
+        attributes: ['id', 'name', 'description'],
+        through: { attributes: [] },
+        include: [{
+            model: Permission,
+            as: 'permissions',
+            attributes: ['id', 'name', 'module', 'action'],
+            through: { attributes: [] }
+        }]
+    };
+    if (whereClause) {
+        roleInclude.where = whereClause;
+        roleInclude.required = true;
+    }
+    return roleInclude;
+};
+
 class UserService {
+    _formatUser(user) {
+        if (!user) return null;
+        const plain = user.toJSON ? user.toJSON() : { ...user };
+        delete plain.password;
+
+        const formattedRoles = (plain.roles || []).map(r => {
+            const perms = (r.permissions || []).map(p => (
+                typeof p === 'string' ? p : p.name || `${p.module}:${p.action}`
+            ));
+            return {
+                id: r.id,
+                name: r.name,
+                description: r.description,
+                permissions: perms
+            };
+        });
+
+        const distinctPerms = Array.from(new Set(
+            formattedRoles.flatMap(r => r.permissions || [])
+        ));
+
+        return {
+            ...plain,
+            roles: formattedRoles,
+            permissions: distinctPerms
+        };
+    }
+
     async createUser(data) {
         const exist = await User.findOne({
             where: { email: data.email }
@@ -56,41 +105,26 @@ class UserService {
 
         await user.addRole(role);
 
-        return await User.findByPk(user.id, {
-            attributes: { exclude: ['password'] },
-            include: [{
-                model: Role,
-                as: 'roles',
-                attributes: ['id', 'name', 'permissions'],
-                through: { attributes: [] }
-            }]
-        });
+        return await this.getUserById(user.id);
     }
 
     async getAllUsers() {
-        return await User.findAll({
+        const users = await User.findAll({
             attributes: { exclude: ['password'] },
-            include: [{
-                model: Role,
-                as: 'roles',
-                attributes: ['id', 'name', 'permissions'],
-                through: { attributes: [] }
-            }]
+            include: [getRoleInclude()]
         });
+        return users.map(u => this._formatUser(u));
     }
-    async getUserById(id) {
-        return await User.findByPk(id, {
-            attributes: { exclude: ['password'] },
-            include: [{
-                model: Role,
-                as: 'roles',
-                attributes: ['id', 'name', 'permissions'],
-                through: { attributes: [] }
-            }]
-        });
-    }
-    async updateUser(id, data) {
 
+    async getUserById(id) {
+        const user = await User.findByPk(id, {
+            attributes: { exclude: ['password'] },
+            include: [getRoleInclude()]
+        });
+        return this._formatUser(user);
+    }
+
+    async updateUser(id, data) {
         const user = await User.findByPk(id);
 
         if (!user) {
@@ -110,10 +144,22 @@ class UserService {
 
         await user.update(updateData);
 
+        if (data.role_id) {
+            const role = await Role.findByPk(data.role_id);
+            if (role) {
+                await user.setRoles([role]);
+            }
+        } else if (data.role) {
+            const role = await Role.findOne({ where: { name: data.role } });
+            if (role) {
+                await user.setRoles([role]);
+            }
+        }
+
         return await this.getUserById(id);
     }
-    async deleteUser(id) {
 
+    async deleteUser(id) {
         const user = await User.findByPk(id);
 
         if (!user) {
@@ -175,21 +221,16 @@ class UserService {
             throw new Error('Could not retrieve email from Google');
         }
 
-        let user = await User.findOne({
+        let userRecord = await User.findOne({
             where: { email: googleEmail },
-            include: [{
-                model: Role,
-                as: 'roles',
-                attributes: ['id', 'name', 'permissions'],
-                through: { attributes: [] }
-            }]
+            include: [getRoleInclude()]
         });
 
-        if (!user) {
+        if (!userRecord) {
             const randomPassword = await bcrypt.hash(Math.random().toString(36) + Date.now(), 10);
             const placeholderPhone = 'g_' + (googleSub ? googleSub.slice(-8) : Date.now().toString().slice(-8));
 
-            user = await User.create({
+            const newUser = await User.create({
                 name: googleName,
                 email: googleEmail,
                 password: randomPassword,
@@ -199,50 +240,36 @@ class UserService {
 
             const customerRole = await Role.findOne({ where: { name: 'customer' } });
             if (customerRole) {
-                await user.addRole(customerRole);
+                await newUser.addRole(customerRole);
             }
 
-            user = await User.findByPk(user.id, {
-                include: [{
-                    model: Role,
-                    as: 'roles',
-                    attributes: ['id', 'name', 'permissions'],
-                    through: { attributes: [] }
-                }]
+            userRecord = await User.findByPk(newUser.id, {
+                include: [getRoleInclude()]
             });
         }
 
-        const accessToken = generateAccessToken(user);
-        const refreshToken = generateRefreshToken(user);
+        const formattedUser = this._formatUser(userRecord);
+
+        const accessToken = generateAccessToken(formattedUser);
+        const refreshToken = generateRefreshToken(formattedUser);
 
         await RefreshToken.create({
-            user_id: user.id,
+            user_id: formattedUser.id,
             token: refreshToken,
             expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
         });
 
         return {
-            user: {
-                id: user.id,
-                name: user.name,
-                email: user.email,
-                roles: user.roles
-            },
+            user: formattedUser,
             accessToken,
             refreshToken
         };
     }
 
     async login(data) {
-
         const user = await User.findOne({
             where: { email: data.email },
-            include: [{
-                model: Role,
-                as: 'roles',
-                attributes: ['id', 'name', 'permissions'],
-                through: { attributes: [] }
-            }]
+            include: [getRoleInclude()]
         });
 
         if (!user) {
@@ -258,28 +285,25 @@ class UserService {
             throw new Error('Invalid email or password');
         }
 
-        const accessToken = generateAccessToken(user);
-        const refreshToken = generateRefreshToken(user);
+        const formattedUser = this._formatUser(user);
+
+        const accessToken = generateAccessToken(formattedUser);
+        const refreshToken = generateRefreshToken(formattedUser);
 
         await RefreshToken.create({
-            user_id: user.id,
+            user_id: formattedUser.id,
             token: refreshToken,
             expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
         });
 
         return {
-            user: {
-                id: user.id,
-                name: user.name,
-                email: user.email,
-                roles: user.roles
-            },
+            user: formattedUser,
             accessToken,
             refreshToken
         };
     }
-    async refreshToken(token) {
 
+    async refreshToken(token) {
         const decoded = verifyRefreshToken(token);
 
         const savedToken = await RefreshToken.findOne({
@@ -296,34 +320,30 @@ class UserService {
         }
 
         const user = await User.findByPk(decoded.id, {
-            include: [{
-                model: Role,
-                as: 'roles',
-                attributes: ['id', 'name', 'permissions'],
-                through: { attributes: [] }
-            }]
+            include: [getRoleInclude()]
         });
 
         if (!user) {
             throw new Error('User not found');
         }
 
-        const newAccessToken = generateAccessToken(user);
+        const formattedUser = this._formatUser(user);
+        const newAccessToken = generateAccessToken(formattedUser);
 
         return {
             accessToken: newAccessToken
         };
     }
-    async logout(refreshToken) {
 
+    async logout(refreshToken) {
         await RefreshToken.destroy({
             where: { token: refreshToken }
         });
 
         return true;
     }
-    async changePassword(userId, oldPassword, newPassword) {
 
+    async changePassword(userId, oldPassword, newPassword) {
         const user = await User.findByPk(userId);
 
         if (!user) {
@@ -341,6 +361,7 @@ class UserService {
 
         return true;
     }
+
     async sendResetOtp(email) {
         const cleanEmail = (email || '').trim().toLowerCase();
         if (!cleanEmail || !cleanEmail.includes('@')) {
@@ -348,181 +369,69 @@ class UserService {
         }
 
         const user = await User.findOne({ where: { email: cleanEmail } });
-
         if (!user) {
-            throw new Error('No account found associated with this email');
+            throw new Error('No account found with this email address');
         }
 
-        // Generate 6-digit OTP
-        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-        // Invalidate previous unused OTPs for this user & purpose
-        await Otp.update(
-            { is_used: true },
-            {
-                where: {
-                    user_id: user.id,
-                    purpose: 'reset_password',
-                    is_used: false
-                }
+        await Otp.destroy({
+            where: {
+                user_id: user.id,
+                type: 'PASSWORD_RESET'
             }
-        );
+        });
 
         await Otp.create({
             user_id: user.id,
-            otp,
-            purpose: 'reset_password',
-            expires_at: new Date(Date.now() + 5 * 60 * 1000),
+            otp_code: otpCode,
+            type: 'PASSWORD_RESET',
+            expires_at: expiresAt,
             is_used: false
         });
 
-        await sendOtpEmail(cleanEmail, otp);
+        try {
+            await sendOtpEmail(cleanEmail, otpCode);
+        } catch (emailErr) {
+            console.error('[sendResetOtp] sendOtpEmail failed:', emailErr.message);
+            throw new Error('Failed to send OTP email: ' + (emailErr.message || 'Unknown error'));
+        }
 
-        return { 
-            message: 'OTP verification code sent to your email successfully',
-            email: cleanEmail
+        return {
+            email: cleanEmail,
+            expiresIn: '10 minutes'
         };
     }
 
     async verifyOtp(email, otp) {
         const cleanEmail = (email || '').trim().toLowerCase();
-        const cleanOtp = (otp || '').toString().trim();
+        const cleanOtp = (otp || '').trim();
 
         if (!cleanEmail || !cleanOtp) {
-            throw new Error('Email and OTP code are required');
+            throw new Error('Email and OTP are required');
         }
 
         const user = await User.findOne({ where: { email: cleanEmail } });
         if (!user) {
-            throw new Error('User not found');
-        }
-
-        const record = await Otp.findOne({
-            where: {
-                user_id: user.id,
-                otp: cleanOtp,
-                purpose: 'reset_password',
-                is_used: false
-            },
-            order: [['created_at', 'DESC']]
-        });
-
-        if (!record) {
-            throw new Error('Invalid OTP verification code');
-        }
-
-        if (new Date() > new Date(record.expires_at)) {
-            throw new Error('OTP code has expired. Please request a new code.');
-        }
-
-        record.is_used = true;
-        await record.save();
-        
-        const resetToken = generateResetToken(user);
-
-        return {
-            resetToken,
-            message: 'OTP verified successfully'
-        };
-    }
-
-    async resetPassword(resetToken, newPassword) {
-        if (!resetToken) {
-            throw new Error('Reset token is required');
-        }
-
-        if (!newPassword || newPassword.length < 6) {
-            throw new Error('Password must be at least 6 characters long');
-        }
-
-        let decoded;
-        try {
-            decoded = verifyResetToken(resetToken);
-        } catch (tokenErr) {
-            throw new Error('Reset link or token has expired or is invalid');
-        }
-
-        const user = await User.findByPk(decoded.userId);
-        if (!user) {
-            throw new Error('User account not found');
-        }
-
-        const hashed = await bcrypt.hash(newPassword, 10);
-        user.password = hashed;
-        await user.save();
-
-        // Invalidate any leftover OTPs
-        await Otp.update(
-            { is_used: true },
-            {
-                where: {
-                    user_id: user.id,
-                    purpose: 'reset_password',
-                    is_used: false
-                }
-            }
-        );
-
-        return { message: 'Password has been reset successfully' };
-    }
-
-    async sendResetOtpTelegram(phone) {
-        const user = await User.findOne({
-            where: { phone }
-        });
-
-        if (!user) {
-            throw new Error("Phone not found");
-        }
-
-        if (!user.telegram_chat_id) {
-            throw new Error("Telegram account not linked.");
-        }
-
-        const otp = Math.floor(100000 + Math.random() * 900000).toString();
-
-        await Otp.create({
-            user_id: user.id,
-            otp,
-            purpose: "reset_password",
-            expires_at: new Date(Date.now() + 5 * 60 * 1000),
-            is_used: false
-        });
-
-        await telegramService.sendOtp(user.telegram_chat_id, otp);
-
-        return {
-            message: "OTP sent to Telegram"
-        };
-    }
-
-    /**
-     * 2. VERIFY OTP
-     */
-    async verifyOtpTelegram(phone, otp) {
-        const user = await User.findOne({
-            where: { phone }
-        });
-
-        if (!user) {
-            throw new Error("User not found");
+            throw new Error('Invalid email');
         }
 
         const otpRecord = await Otp.findOne({
             where: {
                 user_id: user.id,
-                otp,
-                purpose: "reset_password",
+                otp_code: cleanOtp,
+                type: 'PASSWORD_RESET',
                 is_used: false
             }
         });
 
         if (!otpRecord) {
-            throw new Error("Invalid OTP");
+            throw new Error('Invalid or expired OTP');
         }
 
-        if (otpRecord.expires_at < new Date()) {
-            throw new Error("OTP expired");
+        if (new Date() > new Date(otpRecord.expires_at)) {
+            throw new Error('OTP has expired. Please request a new one.');
         }
 
         otpRecord.is_used = true;
@@ -531,27 +440,148 @@ class UserService {
         const resetToken = generateResetToken(user);
 
         return {
-            resetToken,
-            message: "OTP verified successfully"
+            valid: true,
+            resetToken
         };
     }
 
-    /**
-     * 3. RESET PASSWORD
-     */
-    async resetPasswordTelegram(resetToken, newPassword) {
+    async resetPassword(resetToken, newPassword) {
+        if (!resetToken || !newPassword) {
+            throw new Error('Reset token and new password are required');
+        }
 
-        const decoded = jwt.verify(resetToken, process.env.RESET_SECRET);
+        if (newPassword.length < 6) {
+            throw new Error('Password must be at least 6 characters long');
+        }
+
+        let decoded;
+        try {
+            decoded = verifyResetToken(resetToken);
+        } catch (err) {
+            throw new Error('Invalid or expired reset token');
+        }
 
         const user = await User.findByPk(decoded.userId);
-
-        if (!user) throw new Error("User not found");
+        if (!user) {
+            throw new Error('User not found');
+        }
 
         user.password = await bcrypt.hash(newPassword, 10);
         await user.save();
 
         return { message: "Password reset successful" };
     }
+
+    async sendResetOtpTelegram(phone) {
+        const cleanPhone = (phone || '').trim();
+        if (!cleanPhone) {
+            throw new Error('Phone number is required');
+        }
+
+        const user = await User.findOne({ where: { phone: cleanPhone } });
+        if (!user) {
+            throw new Error('No account found with this phone number');
+        }
+
+        if (!user.telegram_chat_id) {
+            throw new Error('Telegram is not connected for this account. Please connect your Telegram account first.');
+        }
+
+        const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+        await Otp.destroy({
+            where: {
+                user_id: user.id,
+                type: 'PASSWORD_RESET_TELEGRAM'
+            }
+        });
+
+        await Otp.create({
+            user_id: user.id,
+            otp_code: otpCode,
+            type: 'PASSWORD_RESET_TELEGRAM',
+            expires_at: expiresAt,
+            is_used: false
+        });
+
+        const msg = `🔐 *Angkor Shopping Mall - Password Reset*\n\nYour OTP code is: *${otpCode}*\n\nThis code expires in 10 minutes.\nDo not share this code with anyone.`;
+        await telegramService.sendMessage(user.telegram_chat_id, msg);
+
+        return {
+            phone: cleanPhone,
+            expiresIn: '10 minutes'
+        };
+    }
+
+    async verifyOtpTelegram(phone, otp) {
+        const cleanPhone = (phone || '').trim();
+        const cleanOtp = (otp || '').trim();
+
+        if (!cleanPhone || !cleanOtp) {
+            throw new Error('Phone and OTP are required');
+        }
+
+        const user = await User.findOne({ where: { phone: cleanPhone } });
+        if (!user) {
+            throw new Error('Invalid phone number');
+        }
+
+        const otpRecord = await Otp.findOne({
+            where: {
+                user_id: user.id,
+                otp_code: cleanOtp,
+                type: 'PASSWORD_RESET_TELEGRAM',
+                is_used: false
+            }
+        });
+
+        if (!otpRecord) {
+            throw new Error('Invalid or expired OTP');
+        }
+
+        if (new Date() > new Date(otpRecord.expires_at)) {
+            throw new Error('OTP has expired. Please request a new one.');
+        }
+
+        otpRecord.is_used = true;
+        await otpRecord.save();
+
+        const resetToken = generateResetToken(user);
+
+        return {
+            valid: true,
+            resetToken
+        };
+    }
+
+    async resetPasswordTelegram(resetToken, newPassword) {
+        if (!resetToken || !newPassword) {
+            throw new Error('Reset token and new password are required');
+        }
+
+        if (newPassword.length < 6) {
+            throw new Error('Password must be at least 6 characters long');
+        }
+
+        let decoded;
+        try {
+            decoded = verifyResetToken(resetToken);
+        } catch (err) {
+            throw new Error('Invalid or expired reset token');
+        }
+
+        const user = await User.findByPk(decoded.userId);
+        if (!user) {
+            throw new Error('User not found');
+        }
+
+        user.password = await bcrypt.hash(newPassword, 10);
+        await user.save();
+
+        return { message: "Password reset successful" };
+    }
+
     async adminChangePassword(userId, newPassword) {
         if (!newPassword || newPassword.length < 6) {
             throw new Error('Password must be at least 6 characters long');
@@ -566,41 +596,23 @@ class UserService {
     }
 
     async getStaffUsers() {
-        return await User.findAll({
-            include: [
-                {
-                    model: Role,
-                    as: "roles",
-                    where: {
-                        name: { [Op.ne]: 'customer' }
-                    },
-                    attributes: ["id", "name", "permissions"],
-                    through: {
-                        attributes: [],
-                    },
-                    required: true,
-                },
-            ],
+        const users = await User.findAll({
+            attributes: { exclude: ['password'] },
+            include: [getRoleInclude({
+                name: { [Op.ne]: 'customer' }
+            })]
         });
+        return users.map(u => this._formatUser(u));
     }
 
     async getCustomers() {
-        return await User.findAll({
-            include: [
-                {
-                    model: Role,
-                    as: "roles",
-                    where: {
-                        name: "customer",
-                    },
-                    attributes: ["id", "name", "permissions"],
-                    through: {
-                        attributes: [],
-                    },
-                    required: true,
-                },
-            ],
+        const users = await User.findAll({
+            attributes: { exclude: ['password'] },
+            include: [getRoleInclude({
+                name: 'customer'
+            })]
         });
+        return users.map(u => this._formatUser(u));
     }
 }
 

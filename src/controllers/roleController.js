@@ -35,6 +35,20 @@ class RoleController {
         }
     }
 
+    async getPermissions(req, res) {
+        try {
+            const permissions = await roleService.getAllPermissions();
+
+            return successResponse(
+                res,
+                'Permissions retrieved successfully',
+                permissions
+            );
+        } catch (error) {
+            return errorResponse(res, error.message);
+        }
+    }
+
     async findOne(req, res) {
         try {
             const role = await roleService.getRoleById(req.params.id);

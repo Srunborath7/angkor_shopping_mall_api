@@ -10,7 +10,8 @@ const generateAccessToken = (user) => {
         {
             id: user.id,
             email: user.email,
-            roles: user.roles
+            roles: user.roles,
+            permissions: user.permissions
         },
         ACCESS_SECRET,
         { expiresIn: '15m' }

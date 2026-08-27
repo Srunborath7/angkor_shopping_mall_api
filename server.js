@@ -6,11 +6,17 @@ const server = http.createServer(app);
 const PORT = process.env.PORT || 3000;
 const { setupWebhook } = require("./src/config/telegram");
 const { startRecommendationCleanupJob } = require("./src/services/recommendationService");
+const { seedPermissions } = require("./src/utils/seedPermissions");
 
 sequelize
   .sync({ alter: true })
-  .then(() => {
+  .then(async () => {
     console.log("Database connected.");
+    try {
+      await seedPermissions();
+    } catch (seedErr) {
+      console.error("Permission seeding error:", seedErr.message);
+    }
     server.listen(PORT, () => {
       console.log(`Server running on port http://localhost:${PORT}`);
     });
