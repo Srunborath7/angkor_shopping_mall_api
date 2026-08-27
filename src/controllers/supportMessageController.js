@@ -83,7 +83,9 @@ class SupportMessageController {
     async getMessages(req, res) {
         try {
             const { status, search, page = 1, limit = 20 } = req.query;
-            const offset = (page - 1) * limit;
+            const parsedLimit = Math.max(1, Math.min(100, parseInt(limit, 10) || 20));
+            const parsedPage = Math.max(1, parseInt(page, 10) || 1);
+            const offset = (parsedPage - 1) * parsedLimit;
             const where = {};
 
             if (status && status !== 'all' && status !== 'undefined' && status !== 'null' && status.trim() !== '') {
@@ -100,36 +102,46 @@ class SupportMessageController {
                 ];
             }
 
+            // Single-table count and pagination to prevent PostgreSQL lock memory exhaustion
             const [count, rows] = await Promise.all([
                 SupportMessage.count({ where }),
                 SupportMessage.findAll({
                     where,
-                    include: [
-                        {
-                            model: User,
-                            as: 'user',
-                            attributes: ['id', 'name', 'email', 'phone']
-                        },
-                        {
-                            model: User,
-                            as: 'admin',
-                            attributes: ['id', 'name', 'email']
-                        }
-                    ],
                     order: [
                         ['status', 'ASC'], // 'unread' first
                         ['created_at', 'DESC']
                     ],
-                    limit: parseInt(limit),
-                    offset: parseInt(offset)
+                    limit: parsedLimit,
+                    offset: offset
                 })
             ]);
 
+            // Lightweight population of user & admin objects
+            const userIds = [...new Set(rows.map(r => r.user_id).filter(Boolean))];
+            const adminIds = [...new Set(rows.map(r => r.admin_id).filter(Boolean))];
+            const allUserIds = [...new Set([...userIds, ...adminIds])];
+
+            let userMap = new Map();
+            if (allUserIds.length > 0) {
+                const users = await User.findAll({
+                    where: { id: allUserIds },
+                    attributes: ['id', 'name', 'email', 'phone']
+                });
+                users.forEach(u => userMap.set(u.id, u.toJSON ? u.toJSON() : u));
+            }
+
+            const messages = rows.map(r => {
+                const item = r.toJSON ? r.toJSON() : { ...r };
+                item.user = item.user_id ? userMap.get(item.user_id) || null : null;
+                item.admin = item.admin_id ? userMap.get(item.admin_id) || null : null;
+                return item;
+            });
+
             return successResponse(res, 'Support messages retrieved successfully', {
                 total: count,
-                page: parseInt(page),
-                totalPages: Math.ceil(count / limit),
-                messages: rows
+                page: parsedPage,
+                totalPages: Math.ceil(count / parsedLimit),
+                messages
             });
         } catch (error) {
             console.error('[SupportMessageController] getMessages error:', error);
@@ -144,12 +156,7 @@ class SupportMessageController {
     async getMessageById(req, res) {
         try {
             const { id } = req.params;
-            const message = await SupportMessage.findByPk(id, {
-                include: [
-                    { model: User, as: 'user', attributes: ['id', 'name', 'email', 'phone', 'created_at'] },
-                    { model: User, as: 'admin', attributes: ['id', 'name', 'email'] }
-                ]
-            });
+            const message = await SupportMessage.findByPk(id);
 
             if (!message) {
                 return errorResponse(res, 'Message not found', 404);
@@ -159,6 +166,25 @@ class SupportMessageController {
             if (message.status === 'unread') {
                 message.status = 'in_progress';
                 await message.save();
+            }
+
+            const messageData = message.toJSON ? message.toJSON() : { ...message };
+
+            // Fetch user and admin details
+            if (message.user_id) {
+                messageData.user = await User.findByPk(message.user_id, {
+                    attributes: ['id', 'name', 'email', 'phone', 'created_at']
+                });
+            } else {
+                messageData.user = null;
+            }
+
+            if (message.admin_id) {
+                messageData.admin = await User.findByPk(message.admin_id, {
+                    attributes: ['id', 'name', 'email']
+                });
+            } else {
+                messageData.admin = null;
             }
 
             // Fetch user's recent orders if logged in user
@@ -172,7 +198,7 @@ class SupportMessageController {
             }
 
             return successResponse(res, 'Message details fetched successfully', {
-                message,
+                message: messageData,
                 recentOrders
             });
         } catch (error) {

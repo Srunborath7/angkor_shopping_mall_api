@@ -322,7 +322,7 @@ class ProductService {
                 attributes: [
                     'product_id',
                     [sequelize.fn('SUM', sequelize.col('OrderItem.quantity')), 'total_sales'],
-                    [sequelize.fn('SUM', sequelize.literal('OrderItem.price * OrderItem.quantity')), 'total_revenue'],
+                    [sequelize.literal('SUM("OrderItem"."price" * "OrderItem"."quantity")'), 'total_revenue'],
                     [sequelize.fn('COUNT', sequelize.fn('DISTINCT', sequelize.col('OrderItem.order_id'))), 'order_count']
                 ],
                 include: [
@@ -335,7 +335,7 @@ class ProductService {
                         }
                     }
                 ],
-                group: ['OrderItem.product_id'],
+                group: [sequelize.col('OrderItem.product_id')],
                 order: [[sequelize.literal('total_sales'), 'DESC']],
                 limit: parsedLimit * 2,
                 raw: true
