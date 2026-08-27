@@ -9,9 +9,9 @@ const { startRecommendationCleanupJob } = require("./src/services/recommendation
 const { seedPermissions } = require("./src/utils/seedPermissions");
 
 sequelize
-  .sync({ alter: true })
+  .authenticate()
   .then(async () => {
-    console.log("Database connected.");
+    console.log("Database connected successfully.");
     try {
       await seedPermissions();
     } catch (seedErr) {
