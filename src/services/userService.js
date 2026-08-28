@@ -111,9 +111,22 @@ class UserService {
     async getAllUsers() {
         const users = await User.findAll({
             attributes: { exclude: ['password'] },
-            include: [getRoleInclude()]
+            include: [{
+                model: Role,
+                as: 'roles',
+                attributes: ['id', 'name'],
+                through: { attributes: [] }
+            }],
+            order: [['created_at', 'DESC']]
         });
-        return users.map(u => this._formatUser(u));
+        return users.map(u => {
+            const plain = u.toJSON();
+            delete plain.password;
+            return {
+                ...plain,
+                roles: plain.roles.map(r => ({ id: r.id, name: r.name }))
+            };
+        });
     }
 
     async getUserById(id) {
@@ -598,21 +611,45 @@ class UserService {
     async getStaffUsers() {
         const users = await User.findAll({
             attributes: { exclude: ['password'] },
-            include: [getRoleInclude({
-                name: { [Op.ne]: 'customer' }
-            })]
+            include: [{
+                model: Role,
+                as: 'roles',
+                attributes: ['id', 'name'],
+                through: { attributes: [] },
+                where: { name: { [Op.ne]: 'customer' } },
+                required: true
+            }]
         });
-        return users.map(u => this._formatUser(u));
+        return users.map(u => {
+            const plain = u.toJSON();
+            delete plain.password;
+            return {
+                ...plain,
+                roles: plain.roles.map(r => ({ id: r.id, name: r.name }))
+            };
+        });
     }
 
     async getCustomers() {
         const users = await User.findAll({
             attributes: { exclude: ['password'] },
-            include: [getRoleInclude({
-                name: 'customer'
-            })]
+            include: [{
+                model: Role,
+                as: 'roles',
+                attributes: ['id', 'name'],
+                through: { attributes: [] },
+                where: { name: 'customer' },
+                required: true
+            }]
         });
-        return users.map(u => this._formatUser(u));
+        return users.map(u => {
+            const plain = u.toJSON();
+            delete plain.password;
+            return {
+                ...plain,
+                roles: plain.roles.map(r => ({ id: r.id, name: r.name }))
+            };
+        });
     }
 }
 

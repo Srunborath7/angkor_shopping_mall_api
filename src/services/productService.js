@@ -22,19 +22,16 @@ class ProductService {
             ];
         }
 
-        const products = await Product.findAll({
+        return await Product.findAll({
             where,
+            attributes: ['id', 'name', 'price', 'stock_quantity', 'image_url', 'category_id', 'brand_id', 'is_active', 'created_at'],
             include: [
-                { model: Category, as: 'category' },
-                { model: Brand, as: 'brand' },
-                { model: ProductImage, as: 'images' },
-                { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
-                { model: User, as: 'updater', attributes: ['id', 'name', 'email'] }
+                { model: Category, as: 'category', attributes: ['id', 'name'] },
+                { model: Brand, as: 'brand', attributes: ['id', 'name'] },
+                { model: ProductImage, as: 'images', attributes: ['id', 'image_url', 'is_primary'] }
             ],
             order: [["created_at", "DESC"]]
         });
-
-        return products.map((p) => this._withRatingSummary(p));
     }
 
     async findAllPaged(filters = {}) {
@@ -59,12 +56,11 @@ class ProductService {
 
         const { count, rows } = await Product.findAndCountAll({
             where,
+            attributes: ['id', 'name', 'price', 'stock_quantity', 'image_url', 'category_id', 'brand_id', 'is_active', 'created_at'],
             include: [
-                { model: Category, as: 'category' },
-                { model: Brand, as: 'brand' },
-                { model: ProductImage, as: 'images' },
-                { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
-                { model: User, as: 'updater', attributes: ['id', 'name', 'email'] }
+                { model: Category, as: 'category', attributes: ['id', 'name'] },
+                { model: Brand, as: 'brand', attributes: ['id', 'name'] },
+                { model: ProductImage, as: 'images', attributes: ['id', 'image_url', 'is_primary'] }
             ],
             limit: parseInt(limit),
             offset: parseInt(offset),
@@ -76,7 +72,7 @@ class ProductService {
             totalItems: count,
             totalPages: Math.ceil(count / limit),
             currentPage: parseInt(page),
-            products: rows.map((p) => this._withRatingSummary(p))
+            products: rows
         };
     }
 
@@ -88,26 +84,17 @@ class ProductService {
 
     async findOne(id) {
         const product = await Product.findOne({
-            where: {
-                id
-            },
+            where: { id },
             include: [
-                { model: Category, as: 'category' },
-                { model: Brand, as: 'brand' },
+                { model: Category, as: 'category', attributes: ['id', 'name'] },
+                { model: Brand, as: 'brand', attributes: ['id', 'name'] },
+                { model: ProductImage, as: 'images', attributes: ['id', 'image_url', 'is_primary', 'product_variant_id'] },
                 {
                     model: ProductVariant,
                     as: 'variants',
-                    include: [{ model: ProductImage, as: 'images' }]
+                    attributes: ['id', 'sku', 'price', 'stock_quantity', 'attributes', 'is_active']
                 },
-                { model: ProductDetail, as: 'detail' },
-                { model: ProductImage, as: 'images' },
-                {
-                    model: ProductReview,
-                    as: 'reviews',
-                    include: [{ model: User, as: 'user', attributes: ['id', 'name'] }]
-                },
-                { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
-                { model: User, as: 'updater', attributes: ['id', 'name', 'email'] }
+                { model: ProductDetail, as: 'detail' }
             ]
         });
 
@@ -116,10 +103,20 @@ class ProductService {
         }
 
         const productJson = product.toJSON();
-        const reviews = productJson.reviews || [];
-        const totalReviews = reviews.length;
+
+        // Fetch reviews separately to avoid complex joins
+        const reviews = await ProductReview.findAll({
+            where: { product_id: id },
+            include: [{ model: User, as: 'user', attributes: ['id', 'name'] }],
+            attributes: ['id', 'rating', 'comment', 'created_at'],
+            order: [['created_at', 'DESC']],
+            limit: 20
+        });
+
+        productJson.reviews = reviews.map(r => r.toJSON());
+        const totalReviews = productJson.reviews.length;
         const averageRating = totalReviews > 0
-            ? parseFloat((reviews.reduce((sum, r) => sum + r.rating, 0) / totalReviews).toFixed(1))
+            ? parseFloat((productJson.reviews.reduce((sum, r) => sum + r.rating, 0) / totalReviews).toFixed(1))
             : 0;
 
         productJson.ratingSummary = {

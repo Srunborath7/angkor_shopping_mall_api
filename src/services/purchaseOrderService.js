@@ -93,18 +93,10 @@ class PurchaseOrderService {
 
     async getAllPurchaseOrders() {
         return await PurchaseOrder.findAll({
+            attributes: ['id', 'po_number', 'supplier_id', 'order_date', 'status', 'total_amount', 'notes', 'created_at'],
             include: [
                 { model: Supplier, as: 'supplier', attributes: ['id', 'name', 'contact_person', 'email', 'phone'] },
-                {
-                    model: PurchaseOrderItem,
-                    as: 'items',
-                    include: [
-                        { model: Product, as: 'product', attributes: ['id', 'name', 'price', 'stock_quantity'] },
-                        { model: ProductVariant, as: 'variant', attributes: ['id', 'sku', 'stock_quantity'] }
-                    ]
-                },
-                { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
-                { model: User, as: 'updater', attributes: ['id', 'name', 'email'] }
+                { model: User, as: 'creator', attributes: ['id', 'name'] }
             ],
             order: [['created_at', 'DESC']]
         });
