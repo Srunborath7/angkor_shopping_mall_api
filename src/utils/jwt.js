@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const ACCESS_SECRET = process.env.JWT_SECRET || process.env.ACCESS_SECRET || 'access_secret';
 const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || process.env.REFRESH_SECRET || 'refresh_secret';
 const RESET_SECRET = process.env.RESET_SECRET || 'reset_secret';
+const TWO_FA_SECRET = process.env.TWO_FA_SECRET || 'two_fa_secret';
 
 
 const generateAccessToken = (user) => {
@@ -48,11 +49,33 @@ const verifyRefreshToken = (token) => {
     return jwt.verify(token, REFRESH_SECRET);
 };
 
+const generateTempToken = (user) => {
+    return jwt.sign(
+        {
+            id: user.id,
+            email: user.email,
+            purpose: 'two_fa_verification'
+        },
+        TWO_FA_SECRET,
+        { expiresIn: '5m' }
+    );
+};
+
+const verifyTempToken = (token) => {
+    const decoded = jwt.verify(token, TWO_FA_SECRET);
+    if (decoded.purpose !== 'two_fa_verification') {
+        throw new Error('Invalid token purpose');
+    }
+    return decoded;
+};
+
 module.exports = {
     generateAccessToken,
     generateRefreshToken,
     generateResetToken,
     verifyResetToken,
     verifyAccessToken,
-    verifyRefreshToken
+    verifyRefreshToken,
+    generateTempToken,
+    verifyTempToken
 };

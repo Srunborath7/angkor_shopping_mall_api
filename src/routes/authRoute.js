@@ -6,6 +6,7 @@ const auth = require('../middlewares/auth');
 
 router.post('/login', userController.login);
 router.post('/google', userController.googleLogin);
+router.post('/verify-2fa', userController.verify2FA);
 router.post('/register', userController.create);
 router.post('/refresh-token', userController.refreshToken);
 router.post('/logout', userController.logout);

@@ -121,6 +121,58 @@ class UserController {
         }
     }
 
+    async verify2FA(req, res) {
+        try {
+            const { temp_token, pin } = req.body;
+
+            const result = await userService.verify2FA(temp_token, pin);
+
+            return successResponse(
+                res,
+                '2FA verification successful',
+                result
+            );
+
+        } catch (error) {
+            return errorResponse(res, error.message);
+        }
+    }
+
+    async setTwoFAPin(req, res) {
+        try {
+            const { id } = req.params;
+            const { pin } = req.body;
+
+            const result = await userService.setTwoFAPin(id, pin);
+
+            return successResponse(
+                res,
+                result.message,
+                result
+            );
+
+        } catch (error) {
+            return errorResponse(res, error.message);
+        }
+    }
+
+    async disable2FA(req, res) {
+        try {
+            const { id } = req.params;
+
+            const result = await userService.disable2FA(id);
+
+            return successResponse(
+                res,
+                result.message,
+                result
+            );
+
+        } catch (error) {
+            return errorResponse(res, error.message);
+        }
+    }
+
     async refreshToken(req, res) {
         try {
 

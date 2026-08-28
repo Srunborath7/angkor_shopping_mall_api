@@ -16,6 +16,8 @@ const {
     generateResetToken,
     verifyResetToken,
     verifyRefreshToken,
+    generateTempToken,
+    verifyTempToken,
 } = require('../utils/jwt');
 const { sendOtpEmail } = require('../utils/mailer');
 
@@ -44,6 +46,7 @@ class UserService {
         if (!user) return null;
         const plain = user.toJSON ? user.toJSON() : { ...user };
         delete plain.password;
+        delete plain.two_fa_pin;
 
         const formattedRoles = (plain.roles || []).map(r => {
             const perms = (r.permissions || []).map(p => (
@@ -110,7 +113,7 @@ class UserService {
 
     async getAllUsers() {
         const users = await User.findAll({
-            attributes: { exclude: ['password'] },
+            attributes: { exclude: ['password', 'two_fa_pin'] },
             include: [{
                 model: Role,
                 as: 'roles',
@@ -122,6 +125,7 @@ class UserService {
         return users.map(u => {
             const plain = u.toJSON();
             delete plain.password;
+            delete plain.two_fa_pin;
             return {
                 ...plain,
                 roles: plain.roles.map(r => ({ id: r.id, name: r.name }))
@@ -272,6 +276,28 @@ class UserService {
             expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
         });
 
+        const roleNames = (formattedUser.roles || []).map(r => r.name.toLowerCase());
+        const isStaffOrAdmin = roleNames.some(role =>
+            role !== 'customer' &&
+            (role.includes('admin') ||
+             role.includes('manager') ||
+             role.includes('sale') ||
+             role.includes('staff') ||
+             role.includes('cashier') ||
+             role.includes('inventory') ||
+             role.includes('security') ||
+             role.includes('super'))
+        );
+
+        if (isStaffOrAdmin && userRecord.two_fa_enabled && userRecord.two_fa_pin) {
+            const tempToken = generateTempToken(formattedUser);
+            return {
+                requires_2fa: true,
+                temp_token: tempToken,
+                user: formattedUser
+            };
+        }
+
         return {
             user: formattedUser,
             accessToken,
@@ -300,6 +326,28 @@ class UserService {
 
         const formattedUser = this._formatUser(user);
 
+        const roleNames = (formattedUser.roles || []).map(r => r.name.toLowerCase());
+        const isStaffOrAdmin = roleNames.some(role =>
+            role !== 'customer' &&
+            (role.includes('admin') ||
+             role.includes('manager') ||
+             role.includes('sale') ||
+             role.includes('staff') ||
+             role.includes('cashier') ||
+             role.includes('inventory') ||
+             role.includes('security') ||
+             role.includes('super'))
+        );
+
+        if (isStaffOrAdmin && user.two_fa_enabled && user.two_fa_pin) {
+            const tempToken = generateTempToken(formattedUser);
+            return {
+                requires_2fa: true,
+                temp_token: tempToken,
+                user: formattedUser
+            };
+        }
+
         const accessToken = generateAccessToken(formattedUser);
         const refreshToken = generateRefreshToken(formattedUser);
 
@@ -313,6 +361,83 @@ class UserService {
             user: formattedUser,
             accessToken,
             refreshToken
+        };
+    }
+
+    async verify2FA(tempToken, pin) {
+        if (!tempToken || !pin) {
+            throw new Error('Temporary token and PIN are required');
+        }
+
+        let decoded;
+        try {
+            decoded = verifyTempToken(tempToken);
+        } catch (err) {
+            throw new Error('Invalid or expired verification session');
+        }
+
+        const user = await User.findByPk(decoded.id);
+        if (!user || !user.two_fa_enabled || !user.two_fa_pin) {
+            throw new Error('2FA is not configured for this account');
+        }
+
+        const isMatch = await bcrypt.compare(pin, user.two_fa_pin);
+        if (!isMatch) {
+            throw new Error('Invalid 2FA PIN');
+        }
+
+        const formattedUser = this._formatUser(user);
+
+        const accessToken = generateAccessToken(formattedUser);
+        const refreshToken = generateRefreshToken(formattedUser);
+
+        await RefreshToken.create({
+            user_id: formattedUser.id,
+            token: refreshToken,
+            expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+        });
+
+        return {
+            user: formattedUser,
+            accessToken,
+            refreshToken
+        };
+    }
+
+    async setTwoFAPin(userId, pin) {
+        const user = await User.findByPk(userId);
+        if (!user) {
+            throw new Error('User not found');
+        }
+
+        if (!pin || pin.length < 4) {
+            throw new Error('PIN must be at least 4 digits');
+        }
+
+        const hashedPin = await bcrypt.hash(pin, 10);
+        user.two_fa_pin = hashedPin;
+        user.two_fa_enabled = true;
+        await user.save();
+
+        return {
+            message: '2FA PIN configured successfully',
+            two_fa_enabled: true
+        };
+    }
+
+    async disable2FA(userId) {
+        const user = await User.findByPk(userId);
+        if (!user) {
+            throw new Error('User not found');
+        }
+
+        user.two_fa_pin = null;
+        user.two_fa_enabled = false;
+        await user.save();
+
+        return {
+            message: '2FA disabled successfully',
+            two_fa_enabled: false
         };
     }
 
@@ -610,7 +735,7 @@ class UserService {
 
     async getStaffUsers() {
         const users = await User.findAll({
-            attributes: { exclude: ['password'] },
+            attributes: { exclude: ['password', 'two_fa_pin'] },
             include: [{
                 model: Role,
                 as: 'roles',
@@ -623,6 +748,7 @@ class UserService {
         return users.map(u => {
             const plain = u.toJSON();
             delete plain.password;
+            delete plain.two_fa_pin;
             return {
                 ...plain,
                 roles: plain.roles.map(r => ({ id: r.id, name: r.name }))
@@ -632,7 +758,7 @@ class UserService {
 
     async getCustomers() {
         const users = await User.findAll({
-            attributes: { exclude: ['password'] },
+            attributes: { exclude: ['password', 'two_fa_pin'] },
             include: [{
                 model: Role,
                 as: 'roles',
@@ -645,6 +771,7 @@ class UserService {
         return users.map(u => {
             const plain = u.toJSON();
             delete plain.password;
+            delete plain.two_fa_pin;
             return {
                 ...plain,
                 roles: plain.roles.map(r => ({ id: r.id, name: r.name }))

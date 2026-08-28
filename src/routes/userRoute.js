@@ -11,6 +11,10 @@ router.get('/staff', userController.getStaff);
 router.put('/:id/change-password', userController.adminChangePassword);
 router.put('/change-my-password', auth, userController.changePassword);
 
+// 2FA Management routes
+router.post('/:id/2fa/enable', auth, userController.setTwoFAPin);
+router.post('/:id/2fa/disable', auth, userController.disable2FA);
+
 // Standard CRUD routes
 router.post('/', userController.create);
 router.get('/', userController.findAll);
