@@ -152,7 +152,10 @@ class UserService {
             name: data.name,
             email: data.email,
             phone: data.phone,
-            is_active: data.is_active
+            is_active: data.is_active,
+            telegram_chat_id: data.telegram_chat_id,
+            two_fa_pin: data.two_fa_pin,
+            two_fa_enabled: data.two_fa_enabled
         };
 
         if (data.password) {
@@ -410,11 +413,12 @@ class UserService {
             throw new Error('User not found');
         }
 
-        if (!pin || pin.length < 4) {
-            throw new Error('PIN must be at least 4 digits');
+        const cleanPin = String(pin || '').trim();
+        if (!/^\d{6}$/.test(cleanPin)) {
+            throw new Error('Security PIN must be exactly 6 numeric digits');
         }
 
-        const hashedPin = await bcrypt.hash(pin, 10);
+        const hashedPin = await bcrypt.hash(cleanPin, 10);
         user.two_fa_pin = hashedPin;
         user.two_fa_enabled = true;
         await user.save();

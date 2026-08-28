@@ -13,6 +13,7 @@ sequelize
   .then(async () => {
     console.log("Database connected successfully.");
     try {
+      await sequelize.sync();
       await seedPermissions();
     } catch (seedErr) {
       console.error("Permission seeding error:", seedErr.message);
