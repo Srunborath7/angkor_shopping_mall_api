@@ -24,7 +24,7 @@ class ProductService {
 
         return await Product.findAll({
             where,
-            attributes: ['id', 'name', 'price', 'stock_quantity', 'image_url', 'category_id', 'brand_id', 'is_active', 'created_at'],
+            attributes: ['id', 'name', 'price', 'stock_quantity', 'category_id', 'brand_id', 'is_active', 'created_at'],
             include: [
                 { model: Category, as: 'category', attributes: ['id', 'name'] },
                 { model: Brand, as: 'brand', attributes: ['id', 'name'] },
@@ -56,7 +56,7 @@ class ProductService {
 
         const { count, rows } = await Product.findAndCountAll({
             where,
-            attributes: ['id', 'name', 'price', 'stock_quantity', 'image_url', 'category_id', 'brand_id', 'is_active', 'created_at'],
+            attributes: ['id', 'name', 'price', 'stock_quantity', 'category_id', 'brand_id', 'is_active', 'created_at'],
             include: [
                 { model: Category, as: 'category', attributes: ['id', 'name'] },
                 { model: Brand, as: 'brand', attributes: ['id', 'name'] },
