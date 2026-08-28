@@ -71,7 +71,7 @@ class ProductReviewController {
             const { id } = req.params;
             const userId = req.user.id;
             const roles = req.user.roles || [];
-            const isAdmin = roles.some(role => role.name === "Admin");
+            const isAdmin = roles.some(role => (role && role.name && role.name.toLowerCase() === "admin") || (typeof role === 'string' && role.toLowerCase() === 'admin'));
 
             const result = await productReviewService.destroy(id, userId, isAdmin);
 

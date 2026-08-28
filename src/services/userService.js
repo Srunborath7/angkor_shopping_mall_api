@@ -48,21 +48,19 @@ class UserService {
         delete plain.password;
         delete plain.two_fa_pin;
 
-        const formattedRoles = (plain.roles || []).map(r => {
-            const perms = (r.permissions || []).map(p => (
-                typeof p === 'string' ? p : p.name || `${p.module}:${p.action}`
-            ));
-            return {
-                id: r.id,
-                name: r.name,
-                description: r.description,
-                permissions: perms
-            };
-        });
-
         const distinctPerms = Array.from(new Set(
-            formattedRoles.flatMap(r => r.permissions || [])
+            (plain.roles || []).flatMap(r =>
+                (r.permissions || []).map(p => (
+                    typeof p === 'string' ? p : p.name || `${p.module}:${p.action}`
+                ))
+            )
         ));
+
+        const formattedRoles = (plain.roles || []).map(r => ({
+            id: r.id,
+            name: r.name,
+            description: r.description
+        }));
 
         return {
             ...plain,
