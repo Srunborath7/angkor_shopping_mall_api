@@ -99,7 +99,6 @@ app.use("/api/trade-offers", tradeOfferRoutes);
 app.use("/api/chatbot", chatbotRoutes);
 app.use("/api/support", supportRoutes);
 app.use("/api/attendance", attendanceRoutes);
-app.use("/api/biometrics", biometricRoutes);
 
 app.use("/api", productVariantRoutes);
 app.use("/api", productDetailRoutes);

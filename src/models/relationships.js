@@ -1,4 +1,3 @@
-const BiometricAuthenticator = require('./biometricAuthenticatorModel');
 const LeaveRequest = require('./LeaveRequest');
 const Attendance = require('./Attendance');
 const User = require('./userModel');
@@ -226,9 +225,6 @@ SupportMessage.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 
 User.hasMany(SupportMessage, { foreignKey: 'admin_id', as: 'assignedMessages', onDelete: 'SET NULL' });
 SupportMessage.belongsTo(User, { foreignKey: 'admin_id', as: 'admin' });
-
-User.hasMany(BiometricAuthenticator, { foreignKey: 'user_id', as: 'authenticators', onDelete: 'CASCADE' });
-BiometricAuthenticator.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 
 module.exports = {
     User,
