@@ -103,10 +103,22 @@ class AbaPaywayService {
 
         const purchaseType = 'purchase';
         const paymentOption = 'abapay_khqr';
-        const callbackUrl = process.env.ABA_PAYWAY_CALLBACK_URL || '';
+        
+        // Auto-configure callback URL from APP_URL if not explicitly set
+        const appUrl = process.env.APP_URL || process.env.BASE_URL || '';
+        const envCallbackUrl = process.env.ABA_PAYWAY_CALLBACK_URL || '';
+        const callbackUrl = envCallbackUrl || (appUrl ? `${appUrl}/api/payments/aba/callback` : '');
+        
         const returnDeeplink = process.env.ABA_PAYWAY_RETURN_DEEPLINK || '';
+        
+        // Include order details in return_params for callback processing
+        const returnParams = orderId ? JSON.stringify({
+            order_id: String(orderId),
+            amount: formattedAmount,
+            currency: curr
+        }) : '';
+        
         const customFields = '';
-        const returnParams = '';
         const payout = '';
         const lifetime = String(validityMinutes);
         const qrImageTemplate = 'template1';

@@ -63,7 +63,6 @@ const tradeOfferRoutes = require("./routes/tradeOfferRoute");
 const chatbotRoutes = require("./routes/chatbotRoute");
 const supportRoutes = require("./routes/supportMessageRoute");
 const attendanceRoutes = require("./routes/attendanceRoute");
-const biometricRoutes = require("./routes/biometricRoute");
 
 app.get("/", (req, res) => {
     res.status(200).json({

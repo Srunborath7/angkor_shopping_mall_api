@@ -7,6 +7,7 @@ const optionalAuth = require('../middlewares/optionalAuth');
 router.post('/aba/generate-qr', optionalAuth, paymentController.generateABAQR);
 router.get('/aba/check-status/:tran_id', paymentController.checkABAStatus);
 router.post('/aba/simulate', paymentController.simulatePayment);
+router.post('/aba/callback', paymentController.handleAbaCallback);
 
 // --- Backward Compatibility Aliases ---
 router.post('/khqr/generate', optionalAuth, paymentController.generateABAQR);

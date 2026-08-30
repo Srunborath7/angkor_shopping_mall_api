@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { Order, OrderItem, Product, ProductVariant, User, TradeProduct } = require('../models/relationships');
 const abaPaywayService = require('../services/abaPaywayService');
 const { successResponse, errorResponse } = require('../utils/response');
@@ -344,6 +345,151 @@ class PaymentController {
         } catch (error) {
             console.error('Error simulating ABA payment:', error);
             return errorResponse(res, error.message || 'Simulation failed', 500);
+        }
+    }
+
+    /**
+     * Handle ABA PayWay callback / pushback notification
+     * Verifies HMAC-SHA512 signature and updates order status
+     */
+    async handleAbaCallback(req, res) {
+        try {
+            const callbackData = req.body;
+            const receivedSignature = req.headers['x-payway-hmac-sha512'] || req.headers['X-PAYWAY-HMAC-SHA512'] || '';
+
+            // Verify callback signature
+            const secretKey = process.env.ABA_PAYWAY_API_KEY || '';
+            if (!secretKey) {
+                console.warn('ABA callback received but ABA_PAYWAY_API_KEY is not configured');
+                return successResponse(res, 'Callback received (signature verification skipped - no API key configured)', {
+                    status: 'acknowledged'
+                });
+            }
+
+            // Sort fields by key and concatenate values
+            const sortedKeys = Object.keys(callbackData).sort();
+            const rawString = sortedKeys.map(key => {
+                const value = callbackData[key];
+                if (Array.isArray(value)) {
+                    return JSON.stringify(value);
+                }
+                if (value && typeof value === 'object') {
+                    return JSON.stringify(value);
+                }
+                return String(value ?? '');
+            }).join('');
+
+            // Generate expected signature
+            const expectedSignature = crypto
+                .createHmac('sha512', secretKey)
+                .update(rawString)
+                .digest('base64');
+
+            // Constant-time comparison
+            const signatureValid = crypto.timingSafeEqual(
+                Buffer.from(receivedSignature),
+                Buffer.from(expectedSignature)
+            );
+
+            if (!signatureValid) {
+                console.warn('ABA callback signature verification failed');
+                return errorResponse(res, 'Invalid callback signature', 401);
+            }
+
+            // Parse return_params to extract our custom data
+            let returnParams = {};
+            if (callbackData.return_params) {
+                try {
+                    returnParams = JSON.parse(callbackData.return_params);
+                } catch (e) {
+                    console.warn('Failed to parse ABA return_params:', e.message);
+                }
+            }
+
+            const tranId = callbackData.tran_id;
+            const status = callbackData.status;
+            const apv = callbackData.apv;
+            const orderId = returnParams.order_id;
+
+            console.log(`ABA callback received: tran_id=${tranId}, status=${status}, order_id=${orderId}`);
+
+            // status "0" means success in ABA PayWay
+            if (status === '0' || status === 0) {
+                // Find order by tran_id or order_id
+                let order = null;
+                if (tranId) {
+                    order = await Order.findOne({
+                        where: { payment_intent_id: `ABA-${tranId}` }
+                    });
+                }
+                if (!order && orderId) {
+                    order = await Order.findByPk(orderId);
+                }
+
+                if (order && order.status !== 'paid') {
+                    await order.update({
+                        status: 'paid',
+                        paid_at: new Date(),
+                        transaction_hash: `ABA-${tranId}`,
+                        payment_intent_id: `ABA-${tranId}`,
+                        payment_method: 'ABA_PAYWAY'
+                    });
+
+                    // Update inventory
+                    if (order.items && order.items.length > 0) {
+                        for (const item of order.items) {
+                            try {
+                                if (item.product_variant_id && item.variant) {
+                                    const newStock = Math.max(0, item.variant.stock_quantity - item.quantity);
+                                    await item.variant.update({ stock_quantity: newStock });
+                                } else if (item.product) {
+                                    const newStock = Math.max(0, item.product.stock_quantity - item.quantity);
+                                    await item.product.update({ stock_quantity: newStock });
+                                }
+                            } catch (stockErr) {
+                                console.warn('Stock update warning for item:', item.id, stockErr);
+                            }
+                        }
+                    }
+
+                    // Send Telegram notification
+                    try {
+                        const chatId = process.env.TELEGRAM_CHAT_ID || process.env.CHAT_ID;
+                        if (bot && chatId) {
+                            const orderDisplay = typeof order.id === 'string' ? order.id.slice(0, 8).toUpperCase() : order.id;
+                            bot.sendMessage(
+                                chatId,
+                                `✨ *ABA PayWay Payment Received!*\n\n` +
+                                `📦 *Order:* \`#ORD-${orderDisplay}\`\n` +
+                                `💰 *Amount:* $${parseFloat(order.total_amount).toFixed(2)}\n` +
+                                `👤 *Customer:* ${order.user?.name || 'Customer'} (${order.contact_phone || 'N/A'})\n` +
+                                `🏦 *Method:* ABA PayWay / KHQR\n` +
+                                `🔑 *ABA Tran ID:* \`${tranId}\``,
+                                { parse_mode: 'Markdown' }
+                            ).catch(e => console.warn('Telegram send warning:', e.message));
+                        }
+                    } catch (tgErr) {
+                        console.warn('Telegram notification err:', tgErr);
+                    }
+                }
+
+                return successResponse(res, 'Payment callback processed successfully', {
+                    isPaid: true,
+                    status: 'paid',
+                    tranId,
+                    apv,
+                    orderId
+                });
+            }
+
+            return successResponse(res, 'Callback received - payment pending', {
+                isPaid: false,
+                status: callbackData.status,
+                tranId
+            });
+        } catch (error) {
+            console.error('Error handling ABA callback:', error);
+            return errorResponse(res, error.message || 'Callback processing failed', 500);
         }
     }
 }
