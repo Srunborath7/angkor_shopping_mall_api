@@ -119,6 +119,20 @@ class FlashSaleService {
     }
 
     async findAll() {
+        const { Op } = require('sequelize');
+        try {
+            await FlashSale.destroy({
+                where: {
+                    endTime: {
+                        [Op.ne]: null,
+                        [Op.lt]: new Date()
+                    }
+                }
+            });
+        } catch (e) {
+            // ignore cleanup warning
+        }
+
         const sales = await FlashSale.findAll({
             include: this._productInclude(),
             order: [['created_at', 'DESC']],
@@ -128,8 +142,27 @@ class FlashSaleService {
 
     async findActive() {
         const { Op } = require('sequelize');
+        try {
+            await FlashSale.destroy({
+                where: {
+                    endTime: {
+                        [Op.ne]: null,
+                        [Op.lt]: new Date()
+                    }
+                }
+            });
+        } catch (e) {
+            // ignore cleanup warning
+        }
+
         const sales = await FlashSale.findAll({
-            where: { status: 'active' },
+            where: {
+                status: 'active',
+                [Op.or]: [
+                    { endTime: null },
+                    { endTime: { [Op.gt]: new Date() } }
+                ]
+            },
             include: this._productInclude(),
             order: [['created_at', 'DESC']],
         });
@@ -160,3 +193,4 @@ class FlashSaleService {
 }
 
 module.exports = new FlashSaleService();
+
