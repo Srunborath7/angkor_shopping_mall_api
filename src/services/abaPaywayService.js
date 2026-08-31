@@ -1,3 +1,4 @@
+require('dotenv').config();
 const crypto = require('crypto');
 const axios = require('axios');
 const { BakongKHQR, khqrData, IndividualInfo, MerchantInfo } = require('bakong-khqr');
@@ -7,11 +8,12 @@ class AbaPaywayService {
         this.rawApiUrl = process.env.ABA_PAYWAY_API_URL || 'https://checkout-sandbox.payway.com.kh/api/payment-gateway/v1/payments';
         // Normalize base URL (strip trailing /purchase or /generate-qr if present)
         this.baseUrl = this.rawApiUrl.replace(/\/purchase\/?$/, '').replace(/\/generate-qr\/?$/, '').replace(/\/+$/, '');
-        this.merchantId = process.env.ABA_PAYWAY_MERCHANT_ID || 'e23444444';
-        this.apiKey = process.env.ABA_PAYWAY_API_KEY || 'bff7e9c4570.............';
+        this.merchantId = process.env.ABA_PAYWAY_MERCHANT_ID || 'ec477y777';
+        this.apiKey = process.env.ABA_PAYWAY_API_KEY || 'bff7e9c4570225fc';
         this.rsaPrivateKey = process.env.ABA_PAYWAY_RSA_PRIVATE_KEY || '';
         this.rsaPublicKey = process.env.ABA_PAYWAY_RSA_PUBLIC_KEY || '';
         this.storeLabel = process.env.ABA_PAYWAY_STORE_LABEL || 'Angkor Shopping Mall';
+        this.accountId = process.env.ABA_ACCOUNT_ID || '974242291@abaa';
         this.khqr = new BakongKHQR();
     }
 
@@ -219,16 +221,15 @@ class AbaPaywayService {
                 expirationTimestamp: expTimestamp
             };
 
-            const abaAccountId = process.env.ABA_ACCOUNT_ID || `${this.merchantId}@abaa`;
-            const merchantInfo = new MerchantInfo(
+            const rawAccountId = process.env.ABA_ACCOUNT_ID || '974242291@abaa';
+            const abaAccountId = rawAccountId.includes('@') ? rawAccountId.trim() : (rawAccountId.trim() + '@abaa');
+            const individualInfo = new IndividualInfo(
                 abaAccountId,
                 this.storeLabel,
                 'Phnom Penh',
-                this.merchantId.slice(0, 10),
-                store,
                 optionalData
             );
-            const khqrResult = this.khqr.generateMerchant(merchantInfo);
+            const khqrResult = this.khqr.generateIndividual(individualInfo);
 
             if (khqrResult?.status?.code === 0 && khqrResult.data?.qr) {
                 qrString = khqrResult.data.qr;
@@ -335,4 +336,8 @@ class AbaPaywayService {
 }
 
 module.exports = new AbaPaywayService();
+
+
+
+
 
