@@ -1,9 +1,0 @@
-{
-  "num_users": 6,
-  "num_products": 3,
-  "embedding_dim": 64,
-  "epochs": 20,
-  "batch_size": 16,
-  "best_loss": 0.6615540981292725,
-  "num_interactions": 12
-}
