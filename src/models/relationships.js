@@ -255,3 +255,4 @@ module.exports = {
     Permission,
     RolePermission
 };
+require("./settingModel");

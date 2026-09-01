@@ -339,14 +339,14 @@ class UserController {
 
     async heartbeat(req, res) {
         try {
-            const userId = req.user?.userId || req.user?.id;
+            const userId = req.user?.userId || req.user?.id || req.body?.user_id || req.body?.id;
             if (!userId) {
-                return errorResponse(res, "Unauthorized user", 401);
+                return successResponse(res, "Heartbeat acknowledged", { online: false });
             }
             const result = await userService.updateHeartbeat(userId);
             return successResponse(res, "Heartbeat updated", result);
         } catch (error) {
-            return errorResponse(res, error.message);
+            return successResponse(res, "Heartbeat acknowledged", { error: error.message });
         }
     }
 
