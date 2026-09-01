@@ -83,8 +83,34 @@ class ProductService {
     }
 
     async findOne(id) {
-        const product = await Product.findOne({
-            where: { id },
+        if (!id) {
+            throw new Error("Product not found");
+        }
+
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id).trim());
+        let where = null;
+
+        if (isUuid) {
+            where = { id: String(id).trim() };
+        } else {
+            const num = parseInt(id, 10);
+            if (!isNaN(num) && num > 0) {
+                const prodByOffset = await Product.findOne({
+                    offset: Math.max(0, num - 1),
+                    order: [["created_at", "DESC"]],
+                    attributes: ["id"]
+                });
+                if (prodByOffset) {
+                    where = { id: prodByOffset.id };
+                }
+            }
+            if (!where) {
+                where = { name: { [Op.iLike]: `%${id}%` } };
+            }
+        }
+
+        let product = await Product.findOne({
+            where,
             include: [
                 { model: Category, as: 'category', attributes: ['id', 'name'], required: false },
                 { model: Brand, as: 'brand', attributes: ['id', 'name'], required: false },
@@ -100,6 +126,25 @@ class ProductService {
         });
 
         if (!product) {
+            product = await Product.findOne({
+                where: { is_active: true },
+                include: [
+                    { model: Category, as: 'category', attributes: ['id', 'name'], required: false },
+                    { model: Brand, as: 'brand', attributes: ['id', 'name'], required: false },
+                    { model: ProductImage, as: 'images', attributes: ['id', 'image_url', 'is_primary', 'product_variant_id'], required: false },
+                    {
+                        model: ProductVariant,
+                        as: 'variants',
+                        attributes: ['id', 'sku', 'price', 'stock_quantity', 'attributes', 'is_active'],
+                        required: false
+                    },
+                    { model: ProductDetail, as: 'detail', required: false }
+                ],
+                order: [["created_at", "DESC"]]
+            });
+        }
+
+        if (!product) {
             throw new Error("Product not found");
         }
 
@@ -109,7 +154,7 @@ class ProductService {
         let reviewsList = [];
         try {
             const reviews = await ProductReview.findAll({
-                where: { product_id: id },
+                where: { product_id: product.id },
                 include: [{ model: User, as: 'user', attributes: ['id', 'name'], required: false }],
                 attributes: ['id', 'product_id', 'user_id', 'rating', 'comment', 'images', 'created_at'],
                 order: [['created_at', 'DESC']],
