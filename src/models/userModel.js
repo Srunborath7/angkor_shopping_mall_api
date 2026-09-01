@@ -26,6 +26,11 @@ const User = sequelize.define("User",{
         allowNull: false,
         unique: true
     },
+    last_active_at: {
+        type: DataTypes.DATE,
+        allowNull: true,
+        defaultValue: DataTypes.NOW
+    },
     is_active: {
         type: DataTypes.BOOLEAN,
         allowNull: false,

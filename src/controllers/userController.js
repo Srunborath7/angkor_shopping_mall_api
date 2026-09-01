@@ -337,6 +337,19 @@ class UserController {
         }
     }
 
+    async heartbeat(req, res) {
+        try {
+            const userId = req.user?.userId || req.user?.id;
+            if (!userId) {
+                return errorResponse(res, "Unauthorized user", 401);
+            }
+            const result = await userService.updateHeartbeat(userId);
+            return successResponse(res, "Heartbeat updated", result);
+        } catch (error) {
+            return errorResponse(res, error.message);
+        }
+    }
+
     async getCustomers(req, res) {
         try {
             const customers = await userService.getCustomers();

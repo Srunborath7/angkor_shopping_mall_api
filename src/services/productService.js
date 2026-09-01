@@ -86,15 +86,16 @@ class ProductService {
         const product = await Product.findOne({
             where: { id },
             include: [
-                { model: Category, as: 'category', attributes: ['id', 'name'] },
-                { model: Brand, as: 'brand', attributes: ['id', 'name'] },
-                { model: ProductImage, as: 'images', attributes: ['id', 'image_url', 'is_primary', 'product_variant_id'] },
+                { model: Category, as: 'category', attributes: ['id', 'name'], required: false },
+                { model: Brand, as: 'brand', attributes: ['id', 'name'], required: false },
+                { model: ProductImage, as: 'images', attributes: ['id', 'image_url', 'is_primary', 'product_variant_id'], required: false },
                 {
                     model: ProductVariant,
                     as: 'variants',
-                    attributes: ['id', 'sku', 'price', 'stock_quantity', 'attributes', 'is_active']
+                    attributes: ['id', 'sku', 'price', 'stock_quantity', 'attributes', 'is_active'],
+                    required: false
                 },
-                { model: ProductDetail, as: 'detail' }
+                { model: ProductDetail, as: 'detail', required: false }
             ]
         });
 
@@ -104,19 +105,25 @@ class ProductService {
 
         const productJson = product.toJSON();
 
-        // Fetch reviews separately to avoid complex joins
-        const reviews = await ProductReview.findAll({
-            where: { product_id: id },
-            include: [{ model: User, as: 'user', attributes: ['id', 'name'] }],
-            attributes: ['id', 'rating', 'comment', 'created_at'],
-            order: [['created_at', 'DESC']],
-            limit: 20
-        });
+        // Fetch reviews safely to avoid complex join locks
+        let reviewsList = [];
+        try {
+            const reviews = await ProductReview.findAll({
+                where: { product_id: id },
+                include: [{ model: User, as: 'user', attributes: ['id', 'name'], required: false }],
+                attributes: ['id', 'product_id', 'user_id', 'rating', 'comment', 'images', 'created_at'],
+                order: [['created_at', 'DESC']],
+                limit: 50
+            });
+            reviewsList = reviews.map(r => r.toJSON());
+        } catch (e) {
+            console.warn('Product reviews fetch warning in findOne:', e.message);
+        }
 
-        productJson.reviews = reviews.map(r => r.toJSON());
-        const totalReviews = productJson.reviews.length;
+        productJson.reviews = reviewsList;
+        const totalReviews = reviewsList.length;
         const averageRating = totalReviews > 0
-            ? parseFloat((productJson.reviews.reduce((sum, r) => sum + r.rating, 0) / totalReviews).toFixed(1))
+            ? parseFloat((reviewsList.reduce((sum, r) => sum + Number(r.rating || 5), 0) / totalReviews).toFixed(1))
             : 0;
 
         productJson.ratingSummary = {
@@ -487,3 +494,4 @@ class ProductService {
 }
 
 module.exports = new ProductService();
+

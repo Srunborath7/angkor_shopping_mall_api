@@ -4,6 +4,7 @@ const userController = require('../controllers/userController');
 const auth = require('../middlewares/auth');
 
 // Customer & Staff routes
+router.post('/heartbeat', auth, userController.heartbeat);
 router.get('/customers', userController.getCustomers);
 router.get('/staff', userController.getStaff);
 

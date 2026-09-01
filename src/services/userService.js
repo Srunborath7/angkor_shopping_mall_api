@@ -48,6 +48,9 @@ class UserService {
         delete plain.password;
         delete plain.two_fa_pin;
 
+        const ONLINE_THRESHOLD_MS = 2 * 60 * 1000;
+        const isOnline = plain.last_active_at ? (Date.now() - new Date(plain.last_active_at).getTime()) < ONLINE_THRESHOLD_MS : false;
+
         const distinctPerms = Array.from(new Set(
             (plain.roles || []).flatMap(r =>
                 (r.permissions || []).map(p => (
@@ -64,6 +67,7 @@ class UserService {
 
         return {
             ...plain,
+            is_online: isOnline,
             roles: formattedRoles,
             permissions: distinctPerms
         };
@@ -120,12 +124,15 @@ class UserService {
             }],
             order: [['created_at', 'DESC']]
         });
+        const ONLINE_THRESHOLD_MS = 2 * 60 * 1000;
         return users.map(u => {
             const plain = u.toJSON();
             delete plain.password;
             delete plain.two_fa_pin;
+            const isOnline = plain.last_active_at ? (Date.now() - new Date(plain.last_active_at).getTime()) < ONLINE_THRESHOLD_MS : false;
             return {
                 ...plain,
+                is_online: isOnline,
                 roles: plain.roles.map(r => ({ id: r.id, name: r.name }))
             };
         });
@@ -735,6 +742,15 @@ class UserService {
         return true;
     }
 
+    async updateHeartbeat(userId) {
+        if (!userId) return null;
+        await User.update(
+            { last_active_at: new Date() },
+            { where: { id: userId } }
+        );
+        return { success: true, last_active_at: new Date() };
+    }
+
     async getStaffUsers() {
         const users = await User.findAll({
             attributes: { exclude: ['password', 'two_fa_pin'] },
@@ -745,14 +761,18 @@ class UserService {
                 through: { attributes: [] },
                 where: { name: { [Op.ne]: 'customer' } },
                 required: true
-            }]
+            }],
+            order: [['created_at', 'DESC']]
         });
+        const ONLINE_THRESHOLD_MS = 2 * 60 * 1000;
         return users.map(u => {
             const plain = u.toJSON();
             delete plain.password;
             delete plain.two_fa_pin;
+            const isOnline = plain.last_active_at ? (Date.now() - new Date(plain.last_active_at).getTime()) < ONLINE_THRESHOLD_MS : false;
             return {
                 ...plain,
+                is_online: isOnline,
                 roles: plain.roles.map(r => ({ id: r.id, name: r.name }))
             };
         });
@@ -768,14 +788,18 @@ class UserService {
                 through: { attributes: [] },
                 where: { name: 'customer' },
                 required: true
-            }]
+            }],
+            order: [['created_at', 'DESC']]
         });
+        const ONLINE_THRESHOLD_MS = 2 * 60 * 1000;
         return users.map(u => {
             const plain = u.toJSON();
             delete plain.password;
             delete plain.two_fa_pin;
+            const isOnline = plain.last_active_at ? (Date.now() - new Date(plain.last_active_at).getTime()) < ONLINE_THRESHOLD_MS : false;
             return {
                 ...plain,
+                is_online: isOnline,
                 roles: plain.roles.map(r => ({ id: r.id, name: r.name }))
             };
         });

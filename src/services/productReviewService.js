@@ -27,17 +27,30 @@ class ProductReviewService {
     }
 
     async findAll(productId) {
-        return await ProductReview.findAll({
-            where: { product_id: productId },
-            include: [
-                {
-                    model: User,
-                    as: "user",
-                    attributes: ["id", "name"]
-                }
-            ],
-            order: [["created_at", "DESC"]]
-        });
+        try {
+            return await ProductReview.findAll({
+                where: { product_id: productId },
+                include: [
+                    {
+                        model: User,
+                        as: "user",
+                        attributes: ["id", "name"],
+                        required: false
+                    }
+                ],
+                attributes: ["id", "product_id", "user_id", "rating", "comment", "images", "created_at"],
+                order: [["created_at", "DESC"]],
+                limit: 50
+            });
+        } catch (err) {
+            console.warn("ProductReview findAll fallback without join:", err.message);
+            return await ProductReview.findAll({
+                where: { product_id: productId },
+                attributes: ["id", "product_id", "user_id", "rating", "comment", "images", "created_at"],
+                order: [["created_at", "DESC"]],
+                limit: 50
+            });
+        }
     }
 
     async update(id, userId, data) {
@@ -96,3 +109,4 @@ class ProductReviewService {
 }
 
 module.exports = new ProductReviewService();
+
