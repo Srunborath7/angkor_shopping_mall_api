@@ -8,8 +8,8 @@ class AbaPaywayService {
         this.rawApiUrl = process.env.ABA_PAYWAY_API_URL || 'https://checkout-sandbox.payway.com.kh/api/payment-gateway/v1/payments';
         // Normalize base URL (strip trailing /purchase or /generate-qr if present)
         this.baseUrl = this.rawApiUrl.replace(/\/purchase\/?$/, '').replace(/\/generate-qr\/?$/, '').replace(/\/+$/, '');
-        this.merchantId = (process.env.ABA_PAYWAY_MERCHANT_ID || 'ec477y777').trim();
-        this.apiKey = (process.env.ABA_PAYWAY_API_KEY || 'bff7e9c4570225fc').trim();
+        this.merchantId = (process.env.ABA_PAYWAY_MERCHANT_ID || 'ec478119').trim();
+        this.apiKey = (process.env.ABA_PAYWAY_API_KEY || 'c2b4f7145b8cea966b2164dacaea6afb14bc2324').trim();
         this.rsaPrivateKey = process.env.ABA_PAYWAY_RSA_PRIVATE_KEY || '';
         this.rsaPublicKey = process.env.ABA_PAYWAY_RSA_PUBLIC_KEY || '';
         this.storeLabel = process.env.ABA_PAYWAY_STORE_LABEL || 'Angkor Shopping Mall';
@@ -169,8 +169,9 @@ class AbaPaywayService {
                 });
 
                 const resData = qrResponse.data;
-                if (resData && (resData.status?.code === '00' || resData.status === 0 || resData.qr_string || resData.data?.qr_string)) {
-                    const qrString = resData.qr_string || resData.data?.qr_string;
+                const qrString = resData.qrString || resData.qr_string || resData.data?.qrString || resData.data?.qr_string;
+                const statusCode = resData.status?.code !== undefined ? String(resData.status.code) : (resData.status !== undefined ? String(resData.status) : '');
+                if (resData && (statusCode === '0' || statusCode === '00' || qrString)) {
                     const md5Hash = resData.md5 || (qrString ? crypto.createHash('md5').update(qrString).digest('hex') : tranId);
                     const abaDeepLink = resData.abapay_deeplink || resData.deeplink || resData.app_checkout_url || (qrString ? `aba://qr?qr=${encodeURIComponent(qrString)}` : '');
                     const checkoutUrl = resData.checkout_url || resData.data?.checkout_url || '';
