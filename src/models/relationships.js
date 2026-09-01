@@ -1,3 +1,4 @@
+const Testimonial = require('./testimonialModel');
 const LeaveRequest = require('./LeaveRequest');
 const Attendance = require('./Attendance');
 const User = require('./userModel');
@@ -227,6 +228,7 @@ User.hasMany(SupportMessage, { foreignKey: 'admin_id', as: 'assignedMessages', o
 SupportMessage.belongsTo(User, { foreignKey: 'admin_id', as: 'admin' });
 
 module.exports = {
+    Testimonial,
     User,
     Role,
     UserRole,

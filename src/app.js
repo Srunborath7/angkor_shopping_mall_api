@@ -61,6 +61,7 @@ const flashSaleRoutes = require("./routes/flashSaleRoute");
 const chatbotRoutes = require("./routes/chatbotRoute");
 const supportRoutes = require("./routes/supportMessageRoute");
 const attendanceRoutes = require("./routes/attendanceRoute");
+const testimonialRoutes = require("./routes/testimonialRoute");
 
 app.get("/", (req, res) => {
     res.status(200).json({
@@ -95,6 +96,7 @@ app.use("/api/purchase-orders", purchaseOrderRoutes);
 app.use("/api/chatbot", chatbotRoutes);
 app.use("/api/support", supportRoutes);
 app.use("/api/attendance", attendanceRoutes);
+app.use("/api/testimonials", testimonialRoutes);
 
 app.use("/api", productVariantRoutes);
 app.use("/api", productDetailRoutes);
