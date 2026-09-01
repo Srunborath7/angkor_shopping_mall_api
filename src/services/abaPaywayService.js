@@ -391,7 +391,10 @@ class AbaPaywayService {
                         message: statusObj?.message || 'Awaiting ABA payment'
                     };
                 } catch (error) {
-                    console.warn(`ABA check status [${endpoint}] warning:`, error.response?.data || error.message);
+                    // Silent log in sandbox polling
+  if (process.env.NODE_ENV === 'development') {
+      console.debug(`ABA check status [${endpoint}] notice:`, error.response?.data?.status?.message || error.message);
+  }
                 }
             }
         }
