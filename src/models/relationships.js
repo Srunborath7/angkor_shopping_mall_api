@@ -6,6 +6,7 @@ const Role = require('./roleModel');
 const UserRole = require('./userRoleModel');
 const Permission = require('./permissionModel');
 const RolePermission = require('./rolePermissionModel');
+const Delivery = require('./deliveryModel');
 const RefreshToken = require('./refreshTokenModel');
 const Product = require('./productModel');
 const Category = require('./categoryModel');
@@ -138,6 +139,9 @@ OrderItem.belongsTo(Product, { foreignKey: 'product_id', as: 'product' });
 
 ProductVariant.hasMany(OrderItem, { foreignKey: 'variant_id', as: 'orderItems' });
 OrderItem.belongsTo(ProductVariant, { foreignKey: 'variant_id', as: 'variant' });
+// Delivery Associations
+Order.hasOne(Delivery, { foreignKey: 'order_id', as: 'delivery', onDelete: 'CASCADE' });
+Delivery.belongsTo(Order, { foreignKey: 'order_id', as: 'order' });
 
 // Supplier & Purchase Order Associations
 Supplier.hasMany(PurchaseOrder, { foreignKey: 'supplier_id', as: 'purchaseOrders' });

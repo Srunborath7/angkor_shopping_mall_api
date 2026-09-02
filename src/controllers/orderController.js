@@ -478,6 +478,7 @@ class OrderController {
                 include: [
                     { model: OrderItem, as: 'items', include: orderItemIncludes() },
                     { model: User, as: 'user', attributes: ['id', 'name', 'email', 'phone'] },
+                    { model: Delivery, as: 'delivery' },
                     tradeInIncludes()
                 ]
             });

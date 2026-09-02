@@ -63,6 +63,7 @@ const supportRoutes = require("./routes/supportMessageRoute");
 const attendanceRoutes = require("./routes/attendanceRoute");
 const testimonialRoutes = require("./routes/testimonialRoute");
 const settingRoutes = require("./routes/settingRoute");
+const deliveryRoutes = require("./routes/deliveryRoute");
 
 app.get("/", (req, res) => {
     res.status(200).json({
@@ -99,6 +100,7 @@ app.use("/api/support", supportRoutes);
 app.use("/api/attendance", attendanceRoutes);
 app.use("/api/testimonials", testimonialRoutes);
 app.use("/api/settings", settingRoutes);
+app.use("/api/deliveries", deliveryRoutes);
 
 app.use("/api", productVariantRoutes);
 app.use("/api", productDetailRoutes);

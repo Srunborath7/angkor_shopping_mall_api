@@ -5,9 +5,9 @@ const sequelize = new Sequelize(process.env.DATABASE_URL, {
     dialect: 'postgres',
     logging: false,
     pool: {
-        max: 5,
+        max: 10,
         min: 0,
-        acquire: 30000,
+        acquire: 60000,
         idle: 10000
     },
     dialectOptions: {
@@ -15,6 +15,20 @@ const sequelize = new Sequelize(process.env.DATABASE_URL, {
             require: true,
             rejectUnauthorized: false
         }
+    },
+    retry: {
+        max: 3,
+        match: [
+            /out of shared memory/i,
+            /ConnectionAcquireTimeoutError/i,
+            /SequelizeConnectionError/i,
+            /SequelizeConnectionRefusedError/i,
+            /SequelizeHostNotFoundError/i,
+            /SequelizeHostNotReachableError/i,
+            /SequelizeInvalidConnectionError/i,
+            /SequelizeConnectionTimedOutError/i,
+            /TimeoutError/i
+        ]
     }
 });
 

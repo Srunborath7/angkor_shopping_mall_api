@@ -1,62 +1,37 @@
-/**
- * trackInteraction.js
- *
- * Records a user–product interaction into the `user_product_interactions` table.
- * Called silently (never throws) so it never disrupts the main request flow.
- *
- * Interaction weights:
- *   view   = 1  (user opened a product detail page)
- *   search = 2  (user searched and this product appeared in results)
- *   cart   = 3  (user added product to cart)
- *   order  = 5  (user ordered this product)
- */
-
 const { Op } = require('sequelize');
 const UserProductInteraction = require('../models/userProductInteractionModel');
 
 const INTERACTION_WEIGHTS = {
-    view:   1,
+    view: 1,
     search: 2,
-    cart:   3,
-    order:  5,
+    cart: 3,
+    order: 5,
 };
 
 /**
- * Track a single user–product interaction.
- *
- * @param {string|null} userId     - UUID of the authenticated user (skipped if null)
- * @param {string}      productId  - UUID of the product
- * @param {string}      type       - One of: 'view' | 'search' | 'cart' | 'order'
+ * Track a single user-product interaction.
  */
 async function trackInteraction(userId, productId, type) {
     if (!userId || !productId) return;
 
     const weight = INTERACTION_WEIGHTS[type];
-    if (!weight) {
-        console.warn(`[trackInteraction] Unknown interaction type: "${type}"`);
-        return;
-    }
+    if (!weight) return;
 
     try {
         await UserProductInteraction.create({
-            user_id:          userId,
-            product_id:       productId,
+            user_id: userId,
+            product_id: productId,
             interaction_type: type,
             weight,
-            created_at:       new Date(),
-        });
+            created_at: new Date(),
+        }, { logging: false });
     } catch (err) {
-        // Log but never block the main request
-        console.error(`[trackInteraction] Failed to record ${type} interaction:`, err.message);
+        // Silently ignore tracking errors so they never disrupt user requests
     }
 }
 
 /**
- * Track interactions for multiple products at once (e.g. search results or order items).
- *
- * @param {string|null} userId      - UUID of the authenticated user
- * @param {string[]}    productIds  - Array of product UUIDs
- * @param {string}      type        - Interaction type
+ * Track interactions for multiple products at once.
  */
 async function trackInteractionBulk(userId, productIds, type) {
     if (!userId || !productIds || productIds.length === 0) return;
@@ -66,25 +41,22 @@ async function trackInteractionBulk(userId, productIds, type) {
 
     const now = new Date();
     const records = productIds.map((productId) => ({
-        user_id:          userId,
-        product_id:       productId,
+        user_id: userId,
+        product_id: productId,
         interaction_type: type,
         weight,
-        created_at:       now,
+        created_at: now,
     }));
 
     try {
-        await UserProductInteraction.bulkCreate(records, { ignoreDuplicates: false });
+        await UserProductInteraction.bulkCreate(records, { ignoreDuplicates: true, logging: false });
     } catch (err) {
-        console.error(`[trackInteraction] Bulk ${type} tracking failed:`, err.message);
+        // Silently ignore tracking errors so they never disrupt user requests
     }
 }
 
 /**
- * Automatically cleans up user interaction records older than the specified retention window (default: 2 days / 48 hours).
- *
- * @param {number} days - Number of days to retain (default: 2)
- * @returns {Promise<number>} - Count of deleted records
+ * Automatically cleans up user interaction records older than the specified retention window.
  */
 async function cleanupOldInteractions(days = 2) {
     try {
@@ -95,14 +67,10 @@ async function cleanupOldInteractions(days = 2) {
                     [Op.lt]: cutoffDate,
                 },
             },
+            logging: false
         });
-
-        if (deletedCount > 0) {
-            console.log(`[Recommendation Cleanup] Purged ${deletedCount} interaction record(s) older than ${days} days (${cutoffDate.toISOString()}).`);
-        }
         return deletedCount;
     } catch (err) {
-        console.error('[Recommendation Cleanup] Error deleting old interaction records:', err.message);
         return 0;
     }
 }
@@ -112,4 +80,3 @@ module.exports = {
     trackInteractionBulk, 
     cleanupOldInteractions 
 };
-
