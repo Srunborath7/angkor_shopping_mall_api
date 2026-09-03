@@ -10,7 +10,6 @@ const { setupWebhook } = require("./src/config/telegram");
 const { startRecommendationCleanupJob } = require("./src/services/recommendationService");
 const { seedPermissions } = require("./src/utils/seedPermissions");
 
-// 1. Start HTTP Server immediately so Render health check passes without timing out
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT} (0.0.0.0)`);
 });
