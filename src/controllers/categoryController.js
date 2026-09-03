@@ -1,7 +1,6 @@
 const CategoryService = require('../services/categoryService');
 const Product = require('../models/productModel');
 const Category = require('../models/categoryModel');
-const User = require('../models/userModel');
 const sequelize = require('../config/db');
 const {
     successResponse,
@@ -9,7 +8,6 @@ const {
 } = require('../utils/response');
 
 class CategoryController {
-
     async create(req, res) {
         try {
             const data = { ...req.body };
@@ -32,47 +30,31 @@ class CategoryController {
     async findAll(req, res) {
         try {
             const categories = await Category.findAll({
-                attributes: [
-                    'id',
-                    'name',
-                    'note',
-                    'icon',
-                    'created_by',
-                    'updated_by',
-                    'created_at',
-                    'updated_at',
-                    [
-                        sequelize.fn(
-                            'COUNT',
-                            sequelize.col('products.id')
-                        ),
-                        'product_count'
-                    ]
-                ],
-                include: [
-                    {
-                        model: Product,
-                        as: 'products',
-                        attributes: []
-                    },
-                    {
-                        model: User,
-                        as: 'creator',
-                        attributes: ['id', 'name', 'email']
-                    },
-                    {
-                        model: User,
-                        as: 'updater',
-                        attributes: ['id', 'name', 'email']
-                    }
-                ],
-                group: ['Category.id', 'creator.id', 'updater.id']
+                order: [['created_at', 'DESC']],
+                raw: true
             });
+
+            // Efficient product count per category
+            const productCounts = await Product.findAll({
+                attributes: [
+                    'category_id',
+                    [sequelize.fn('COUNT', sequelize.col('id')), 'product_count']
+                ],
+                group: ['category_id'],
+                raw: true
+            });
+
+            const countMap = new Map(productCounts.map(pc => [pc.category_id, parseInt(pc.product_count) || 0]));
+
+            const formatted = categories.map(cat => ({
+                ...cat,
+                product_count: countMap.get(cat.id) || 0
+            }));
 
             return successResponse(
                 res,
                 'Categories retrieved successfully',
-                categories
+                formatted
             );
         } catch (error) {
             return errorResponse(res, error.message);

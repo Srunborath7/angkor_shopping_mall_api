@@ -1,27 +1,22 @@
 const Category = require('../models/categoryModel');
-const User = require('../models/userModel');
 
 class CategoryService {
   async createCategory(data) {
     return await Category.create(data);
   }
 
-  async getAllCategorys() {
+  async getAllCategories() {
     return await Category.findAll({
-      include: [
-        { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
-        { model: User, as: 'updater', attributes: ['id', 'name', 'email'] }
-      ]
+      order: [['created_at', 'DESC']]
     });
   }
 
+  async getAllCategorys() {
+    return await this.getAllCategories();
+  }
+
   async getCategoryById(id) {
-    return await Category.findByPk(id, {
-      include: [
-        { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
-        { model: User, as: 'updater', attributes: ['id', 'name', 'email'] }
-      ]
-    });
+    return await Category.findByPk(id);
   }
 
   async updateCategory(id, data) {

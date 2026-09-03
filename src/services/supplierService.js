@@ -1,4 +1,4 @@
-const { Supplier, User, PurchaseOrder } = require('../models/relationships');
+const { Supplier, PurchaseOrder } = require('../models/relationships');
 
 class SupplierService {
     async createSupplier(data) {
@@ -7,10 +7,6 @@ class SupplierService {
 
     async getAllSuppliers() {
         return await Supplier.findAll({
-            include: [
-                { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
-                { model: User, as: 'updater', attributes: ['id', 'name', 'email'] }
-            ],
             order: [['created_at', 'DESC']]
         });
     }
@@ -18,9 +14,7 @@ class SupplierService {
     async getSupplierById(id) {
         const supplier = await Supplier.findByPk(id, {
             include: [
-                { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
-                { model: User, as: 'updater', attributes: ['id', 'name', 'email'] },
-                { model: PurchaseOrder, as: 'purchaseOrders' }
+                { model: PurchaseOrder, as: 'purchaseOrders', required: false }
             ]
         });
 

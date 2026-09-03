@@ -27,35 +27,62 @@ const buildOrderSearchCondition = (idOrKey) => {
     };
 };
 
-// Helper to build the standard OrderItem includes (product + variant + images)
-const orderItemIncludes = () => [
-    {
-        model: Product,
-        as: 'product',
-        attributes: ['id', 'name', 'price', 'stock_quantity'],
-        include: [
-            {
-                model: ProductImage,
-                as: 'images',
-                attributes: ['id', 'image_url', 'is_primary'],
-                required: false
-            }
-        ]
-    },
-    {
-        model: ProductVariant,
-        as: 'variant',
-        required: false,
-        attributes: ['id', 'sku', 'price', 'stock_quantity', 'attributes']
-    }
-];
-
 const tradeInIncludes = () => ({
     model: TradeProduct,
     as: 'tradeInProduct',
     attributes: ['id', 'title', 'condition', 'estimated_value', 'image_url', 'status'],
     required: false
 });
+
+// Helper to populate order items in a decoupled query to prevent Postgres out of shared memory
+async function populateOrdersItems(orders) {
+    if (!orders || orders.length === 0) return [];
+    const isArray = Array.isArray(orders);
+    const orderList = isArray ? orders : [orders];
+    const orderIds = orderList.map(o => o.id);
+
+    const items = await OrderItem.findAll({
+        where: { order_id: { [Op.in]: orderIds } },
+        include: [
+            {
+                model: Product,
+                as: 'product',
+                attributes: ['id', 'name', 'price', 'stock_quantity'],
+                include: [
+                    {
+                        model: ProductImage,
+                        as: 'images',
+                        attributes: ['id', 'image_url', 'is_primary'],
+                        required: false
+                    }
+                ],
+                required: false
+            },
+            {
+                model: ProductVariant,
+                as: 'variant',
+                attributes: ['id', 'sku', 'price', 'stock_quantity', 'attributes'],
+                required: false
+            }
+        ]
+    });
+
+    const itemsMap = new Map();
+    for (const it of items) {
+        if (!itemsMap.has(it.order_id)) {
+            itemsMap.set(it.order_id, []);
+        }
+        itemsMap.get(it.order_id).push(it);
+    }
+
+    const populated = orderList.map(o => {
+        const plain = o.toJSON ? o.toJSON() : { ...o };
+        plain.items = itemsMap.get(plain.id) || [];
+        return plain;
+    });
+
+    return isArray ? populated : populated[0];
+}
 
 class OrderController {
     async checkout(req, res) {
@@ -67,7 +94,7 @@ class OrderController {
                 return errorResponse(res, 'Shipping address and contact phone are required', 400);
             }
 
-            // 1. Fetch Cart Items (include variant so we can snapshot attributes + price)
+            // 1. Fetch Cart Items
             const cartItems = await CartItem.findAll({
                 where: { user_id: userId },
                 include: [
@@ -101,7 +128,6 @@ class OrderController {
                     return errorResponse(res, `Insufficient stock for product: ${item.product.name}. Available: ${effectiveStock}`, 400);
                 }
 
-                // Use flash sale price if flash sale item, else variant price if available, otherwise original product price
                 let effectivePrice = item.variant?.price
                     ? parseFloat(item.variant.price)
                     : parseFloat(item.product.price);
@@ -139,7 +165,6 @@ class OrderController {
                 tradeInDiscount = Math.min(subtotalAmount, estimatedVal);
                 finalPayableAmount = Math.max(0, subtotalAmount - tradeInDiscount);
 
-                // Reserve trade-in product
                 tradeInProduct.status = 'in_negotiation';
                 await tradeInProduct.save();
             }
@@ -156,7 +181,7 @@ class OrderController {
                 contact_phone
             });
 
-            // 4. Create Order Items with variant_id + attributes snapshot, decrease stock
+            // 4. Create Order Items
             for (const item of cartItems) {
                 let effectivePrice = item.variant?.price
                     ? parseFloat(item.variant.price)
@@ -184,7 +209,6 @@ class OrderController {
                     attributes: attributesSnapshot
                 });
 
-                // Deduct stock from variant if applicable, otherwise from product
                 if (item.variant_id) {
                     await ProductVariant.decrement('stock_quantity', {
                         by: item.quantity,
@@ -203,7 +227,7 @@ class OrderController {
                 where: { user_id: userId }
             });
 
-            // 6. Track order interactions for ML (fire-and-forget)
+            // 6. Track order interactions
             const orderedProductIds = cartItems.map((item) => item.product_id).filter(Boolean);
             trackInteractionBulk(userId, orderedProductIds, 'order');
 
@@ -224,18 +248,12 @@ class OrderController {
             const userId = req.user.id;
             const orders = await Order.findAll({
                 where: { user_id: userId },
-                include: [
-                    {
-                        model: OrderItem,
-                        as: 'items',
-                        include: orderItemIncludes()
-                    },
-                    tradeInIncludes()
-                ],
+                include: [tradeInIncludes()],
                 order: [['created_at', 'DESC']]
             });
 
-            return successResponse(res, 'Orders retrieved successfully', orders);
+            const populated = await populateOrdersItems(orders);
+            return successResponse(res, 'Orders retrieved successfully', populated);
         } catch (error) {
             return errorResponse(res, error.message);
         }
@@ -252,11 +270,6 @@ class OrderController {
                 where: searchCondition,
                 include: [
                     {
-                        model: OrderItem,
-                        as: 'items',
-                        include: orderItemIncludes()
-                    },
-                    {
                         model: User,
                         as: 'user',
                         attributes: ['id', 'name', 'email', 'phone']
@@ -269,7 +282,8 @@ class OrderController {
                 return errorResponse(res, 'Order not found', 404);
             }
 
-            return successResponse(res, 'Order retrieved successfully', order);
+            const populated = await populateOrdersItems(order);
+            return successResponse(res, 'Order retrieved successfully', populated);
         } catch (error) {
             return errorResponse(res, error.message);
         }
@@ -280,21 +294,18 @@ class OrderController {
             const orders = await Order.findAll({
                 include: [
                     {
-                        model: OrderItem,
-                        as: 'items',
-                        include: orderItemIncludes()
-                    },
-                    {
                         model: User,
                         as: 'user',
-                        attributes: ['id', 'name', 'email', 'phone']
+                        attributes: ['id', 'name', 'email', 'phone'],
+                        required: false
                     },
                     tradeInIncludes()
                 ],
                 order: [['created_at', 'DESC']]
             });
 
-            return successResponse(res, 'Admin orders retrieved successfully', orders);
+            const populated = await populateOrdersItems(orders);
+            return successResponse(res, 'Admin orders retrieved successfully', populated);
         } catch (error) {
             return errorResponse(res, error.message);
         }
@@ -308,11 +319,6 @@ class OrderController {
             const order = await Order.findByPk(id, {
                 include: [
                     {
-                        model: OrderItem,
-                        as: 'items',
-                        include: orderItemIncludes()
-                    },
-                    {
                         model: User,
                         as: 'user',
                         attributes: ['id', 'name', 'email', 'phone', 'telegram_chat_id']
@@ -325,64 +331,26 @@ class OrderController {
                 return errorResponse(res, 'Order not found', 404);
             }
 
-            if (status) {
-                const validStatuses = ['pending', 'paid', 'failed', 'shipped', 'completed', 'cancelled'];
-                if (!validStatuses.includes(status)) {
-                    return errorResponse(res, `Invalid status. Must be one of: ${validStatuses.join(', ')}`, 400);
-                }
+            const updateData = {};
+            if (status) updateData.status = status;
+            if (shipping_address) updateData.shipping_address = shipping_address;
+            if (contact_phone) updateData.contact_phone = contact_phone;
 
-                // Restock items if order status transitions to cancelled from active
-                if (status === 'cancelled' && order.status !== 'cancelled') {
-                    for (const item of order.items) {
-                        if (item.variant_id) {
-                            await ProductVariant.increment('stock_quantity', {
-                                by: item.quantity,
-                                where: { id: item.variant_id }
-                            });
-                        } else {
-                            await Product.increment('stock_quantity', {
-                                by: item.quantity,
-                                where: { id: item.product_id }
-                            });
-                        }
-                    }
+            await order.update(updateData);
 
-                    // Release trade-in product back to available if order cancelled
-                    if (order.trade_in_product_id) {
-                        await TradeProduct.update(
-                            { status: 'available' },
-                            { where: { id: order.trade_in_product_id } }
-                        );
-                    }
-                }
-
-                // If paid or completed, mark trade-in product as traded
-                if ((status === 'paid' || status === 'completed') && order.trade_in_product_id) {
-                    await TradeProduct.update(
-                        { status: 'traded' },
-                        { where: { id: order.trade_in_product_id } }
-                    );
-                }
-
-                order.status = status;
-            }
-
-            if (shipping_address) order.shipping_address = shipping_address;
-            if (contact_phone) order.contact_phone = contact_phone;
-
-            await order.save();
-
-            // Send notification via Telegram if user connected
-            if (order.user && order.user.telegram_chat_id && status) {
+            if (status && order.user && order.user.telegram_chat_id) {
                 try {
-                    const text = `🛍️ *Angkor Shopping Mall - Order Update!*\n\n━━━━━━━━━━━━━━\n🆔 *Order ID:* \`${order.id}\`\n📦 *New Status:* *${status.toUpperCase()}*\n💰 *Total Amount:* $${order.total_amount}\n━━━━━━━━━━━━━━\n\nThank you for shopping with us!`;
-                    await bot.sendMessage(order.user.telegram_chat_id, text, { parse_mode: 'Markdown' });
+                    const message = `📦 *Order Update*
+
+Your Order #${order.id.slice(0, 8)} status has changed to: *${status.toUpperCase()}*.`;
+                    await bot.sendMessage(order.user.telegram_chat_id, message, { parse_mode: 'Markdown' });
                 } catch (tgErr) {
-                    console.error("Failed to send telegram notification:", tgErr.message);
+                    console.error('Telegram notification error:', tgErr.message);
                 }
             }
 
-            return successResponse(res, 'Order status updated successfully', order);
+            const populated = await populateOrdersItems(order);
+            return successResponse(res, 'Order updated successfully', populated);
         } catch (error) {
             return errorResponse(res, error.message);
         }
@@ -392,98 +360,13 @@ class OrderController {
         try {
             const { id } = req.params;
             const order = await Order.findByPk(id);
+
             if (!order) {
                 return errorResponse(res, 'Order not found', 404);
             }
-            // Release trade-in item if any
-            if (order.trade_in_product_id) {
-                await TradeProduct.update(
-                    { status: 'available' },
-                    { where: { id: order.trade_in_product_id } }
-                );
-            }
+
             await order.destroy();
             return successResponse(res, 'Order deleted successfully');
-        } catch (error) {
-            return errorResponse(res, error.message);
-        }
-    }
-
-    async createAdminOrder(req, res) {
-        try {
-            const { user_id, shipping_address, contact_phone, items, status = 'pending' } = req.body;
-            if (!user_id || !shipping_address || !contact_phone || !items || !items.length) {
-                return errorResponse(res, 'Missing required fields: user_id, shipping_address, contact_phone, items', 400);
-            }
-
-            let totalAmount = 0;
-            for (const item of items) {
-                if (item.variant_id) {
-                    const variant = await ProductVariant.findByPk(item.variant_id);
-                    if (!variant) {
-                        return errorResponse(res, `Variant not found ID: ${item.variant_id}`, 404);
-                    }
-                    totalAmount += parseFloat(variant.price || 0) * item.quantity;
-                } else {
-                    const product = await Product.findByPk(item.product_id);
-                    if (!product) {
-                        return errorResponse(res, `Product not found ID: ${item.product_id}`, 404);
-                    }
-                    totalAmount += parseFloat(product.price) * item.quantity;
-                }
-            }
-
-            const order = await Order.create({
-                user_id,
-                subtotal_amount: totalAmount,
-                trade_in_discount: 0.00,
-                total_amount: totalAmount,
-                status,
-                shipping_address,
-                contact_phone
-            });
-
-            for (const item of items) {
-                let effectivePrice = 0;
-                let attributesSnapshot = item.attributes || {};
-
-                if (item.variant_id) {
-                    const variant = await ProductVariant.findByPk(item.variant_id);
-                    effectivePrice = parseFloat(variant.price || 0);
-                    attributesSnapshot = item.attributes || variant.attributes || {};
-                    await ProductVariant.decrement('stock_quantity', {
-                        by: item.quantity,
-                        where: { id: item.variant_id }
-                    });
-                } else {
-                    const product = await Product.findByPk(item.product_id);
-                    effectivePrice = parseFloat(product.price);
-                    await Product.decrement('stock_quantity', {
-                        by: item.quantity,
-                        where: { id: item.product_id }
-                    });
-                }
-
-                await OrderItem.create({
-                    order_id: order.id,
-                    product_id: item.product_id,
-                    variant_id: item.variant_id || null,
-                    quantity: item.quantity,
-                    price: effectivePrice,
-                    attributes: attributesSnapshot
-                });
-            }
-
-            const updatedOrder = await Order.findByPk(order.id, {
-                include: [
-                    { model: OrderItem, as: 'items', include: orderItemIncludes() },
-                    { model: User, as: 'user', attributes: ['id', 'name', 'email', 'phone'] },
-                    { model: Delivery, as: 'delivery' },
-                    tradeInIncludes()
-                ]
-            });
-
-            return successResponse(res, 'Order created successfully', updatedOrder);
         } catch (error) {
             return errorResponse(res, error.message);
         }
@@ -492,44 +375,14 @@ class OrderController {
     async payOrder(req, res) {
         try {
             const { id } = req.params;
-            const { payment_intent } = req.body;
-
             const order = await Order.findByPk(id);
+
             if (!order) {
                 return errorResponse(res, 'Order not found', 404);
             }
 
-            if (order.status === 'paid') {
-                return successResponse(res, 'Order is already paid', order);
-            }
-
-            // Update order status
-            order.status = 'paid';
-            if (payment_intent) {
-                order.payment_intent_id = payment_intent;
-            }
-            await order.save();
-
-            // If trade-in product was used, mark it as traded
-            if (order.trade_in_product_id) {
-                await TradeProduct.update(
-                    { status: 'traded' },
-                    { where: { id: order.trade_in_product_id } }
-                );
-            }
-
-            // Fetch User details to check for Telegram Link
-            const user = await User.findByPk(order.user_id);
-            if (user && user.telegram_chat_id) {
-                try {
-                    const text = `🛍️ *Angkor Shopping Mall - Order Paid!*\n\n━━━━━━━━━━━━━━\n✅ *Order Status:* Paid\n🆔 *Order ID:* \`${order.id}\`\n💰 *Total Amount:* $${order.total_amount}\n📍 *Shipping Address:* ${order.shipping_address}\n━━━━━━━━━━━━━━\n\nThank you for shopping with us! We will notify you once your order is shipped.`;
-                    await bot.sendMessage(user.telegram_chat_id, text, { parse_mode: 'Markdown' });
-                } catch (tgError) {
-                    console.error("Failed to send payment notification telegram message:", tgError.message);
-                }
-            }
-
-            return successResponse(res, 'Payment successful and order updated', order);
+            await order.update({ status: 'paid' });
+            return successResponse(res, 'Order paid successfully', order);
         } catch (error) {
             return errorResponse(res, error.message);
         }
@@ -542,14 +395,16 @@ class OrderController {
             if (!searchCondition) {
                 return errorResponse(res, 'Order not found', 404);
             }
+
             const order = await Order.findOne({
                 where: searchCondition,
                 include: [
                     {
-                        model: OrderItem,
-                        as: 'items',
-                        include: orderItemIncludes()
-                    }
+                        model: User,
+                        as: 'user',
+                        attributes: ['id', 'name', 'email', 'phone']
+                    },
+                    tradeInIncludes()
                 ]
             });
 
@@ -557,20 +412,48 @@ class OrderController {
                 return errorResponse(res, 'Order not found', 404);
             }
 
-            return successResponse(res, 'Checkout details retrieved successfully', {
-                id: order.id,
-                total_amount: order.total_amount,
-                status: order.status,
-                shipping_address: order.shipping_address,
-                contact_phone: order.contact_phone,
-                items: order.items.map(item => ({
-                    name: item.product?.name,
-                    variant_sku: item.variant?.sku || null,
-                    attributes: item.attributes || item.variant?.attributes || {},
-                    quantity: item.quantity,
-                    price: item.price
-                }))
+            const populated = await populateOrdersItems(order);
+            return successResponse(res, 'Order checkout info retrieved successfully', populated);
+        } catch (error) {
+            return errorResponse(res, error.message);
+        }
+    }
+
+    async createAdminOrder(req, res) {
+        try {
+            const { user_id, items = [], shipping_address, contact_phone, status = 'paid' } = req.body;
+
+            if (!items.length) {
+                return errorResponse(res, 'Items are required', 400);
+            }
+
+            let subtotal = 0;
+            for (const it of items) {
+                subtotal += (parseFloat(it.price) || 0) * (parseInt(it.quantity) || 1);
+            }
+
+            const order = await Order.create({
+                user_id: user_id || req.user?.id,
+                subtotal_amount: subtotal,
+                total_amount: subtotal,
+                status,
+                shipping_address: shipping_address || 'Walk-in / In-store purchase',
+                contact_phone: contact_phone || '0000000000'
             });
+
+            for (const it of items) {
+                await OrderItem.create({
+                    order_id: order.id,
+                    product_id: it.product_id,
+                    variant_id: it.variant_id || null,
+                    quantity: it.quantity || 1,
+                    price: it.price,
+                    attributes: it.attributes || {}
+                });
+            }
+
+            const populated = await populateOrdersItems(order);
+            return successResponse(res, 'Order created successfully', populated);
         } catch (error) {
             return errorResponse(res, error.message);
         }

@@ -1,28 +1,18 @@
 const Brand = require('../models/brandModel');
-const User = require('../models/userModel');
 
 class BrandService {
-
   async createBrand(data) {
     return await Brand.create(data);
   }
 
   async getAllBrands() {
     return await Brand.findAll({
-      include: [
-        { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
-        { model: User, as: 'updater', attributes: ['id', 'name', 'email'] }
-      ]
+      order: [['created_at', 'DESC']]
     });
   }
 
   async getBrandById(id) {
-    return await Brand.findByPk(id, {
-      include: [
-        { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
-        { model: User, as: 'updater', attributes: ['id', 'name', 'email'] }
-      ]
-    });
+    return await Brand.findByPk(id);
   }
 
   async updateBrand(id, data) {
