@@ -291,9 +291,7 @@ class ProductService {
                     { model: ProductVariant, as: 'variants' },
                     { model: ProductDetail, as: 'detail' },
                     { model: ProductImage, as: 'images' },
-                    { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
-                    { model: User, as: 'updater', attributes: ['id', 'name', 'email'] }
-                ]
+                    ]
             });
         } catch (error) {
             await t.rollback();

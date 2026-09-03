@@ -1,5 +1,5 @@
-const sequelize = require('../config/db');
 const {
+    sequelize,
     PurchaseOrder,
     PurchaseOrderItem,
     Supplier,
@@ -93,10 +93,8 @@ class PurchaseOrderService {
 
     async getAllPurchaseOrders() {
         return await PurchaseOrder.findAll({
-            attributes: ['id', 'po_number', 'supplier_id', 'order_date', 'status', 'total_amount', 'notes', 'created_at'],
             include: [
-                { model: Supplier, as: 'supplier', attributes: ['id', 'name', 'contact_person', 'email', 'phone'] },
-                { model: User, as: 'creator', attributes: ['id', 'name'] }
+                { model: Supplier, as: 'supplier', attributes: ['id', 'name', 'contact_person', 'email', 'phone'], required: false }
             ],
             order: [['created_at', 'DESC']]
         });
@@ -105,17 +103,7 @@ class PurchaseOrderService {
     async getPurchaseOrderById(id) {
         const purchaseOrder = await PurchaseOrder.findByPk(id, {
             include: [
-                { model: Supplier, as: 'supplier' },
-                {
-                    model: PurchaseOrderItem,
-                    as: 'items',
-                    include: [
-                        { model: Product, as: 'product' },
-                        { model: ProductVariant, as: 'variant' }
-                    ]
-                },
-                { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
-                { model: User, as: 'updater', attributes: ['id', 'name', 'email'] }
+                { model: Supplier, as: 'supplier', required: false }
             ]
         });
 
@@ -123,7 +111,17 @@ class PurchaseOrderService {
             throw new Error('Purchase Order not found');
         }
 
-        return purchaseOrder;
+        const items = await PurchaseOrderItem.findAll({
+            where: { purchase_order_id: id },
+            include: [
+                { model: Product, as: 'product', attributes: ['id', 'name', 'price', 'stock_quantity'], required: false },
+                { model: ProductVariant, as: 'variant', attributes: ['id', 'sku', 'price', 'attributes'], required: false }
+            ]
+        });
+
+        const plain = purchaseOrder.toJSON ? purchaseOrder.toJSON() : { ...purchaseOrder };
+        plain.items = items || [];
+        return plain;
     }
 
     async updateStatus(id, newStatus, updated_by) {
