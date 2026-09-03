@@ -12,7 +12,7 @@ const { seedPermissions } = require("./src/utils/seedPermissions");
 
 // 1. Start HTTP Server immediately so Render health check passes without timing out
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(Server running on port  (0.0.0.0));
+  console.log(`Server running on port ${PORT} (0.0.0.0)`);
 });
 
 // 2. Connect DB and perform initialization asynchronously
