@@ -5,7 +5,9 @@ const { Op } = require('sequelize');
 
 const User = require('../models/userModel');
 const Role = require('../models/roleModel');
+const UserRole = require('../models/userRoleModel');
 const Permission = require('../models/permissionModel');
+const RolePermission = require('../models/rolePermissionModel');
 const RefreshToken = require('../models/refreshTokenModel');
 const Otp = require('../models/otpModel');
 
@@ -21,61 +23,65 @@ const {
 } = require('../utils/jwt');
 const { sendOtpEmail } = require('../utils/mailer');
 
-const getRoleInclude = (whereClause = null) => {
-    const roleInclude = {
-        model: Role,
-        as: 'roles',
-        attributes: ['id', 'name', 'description'],
-        through: { attributes: [] },
-        include: [{
-            model: Permission,
-            as: 'permissions',
-            attributes: ['id', 'name', 'module', 'action'],
-            through: { attributes: [] }
-        }]
-    };
-    if (whereClause) {
-        roleInclude.where = whereClause;
-        roleInclude.required = true;
-    }
-    return roleInclude;
-};
-
 class UserService {
-    _formatUser(user) {
+    async _loadUserWithRolesAndPermissions(user) {
         if (!user) return null;
         const plain = user.toJSON ? user.toJSON() : { ...user };
         delete plain.password;
         delete plain.two_fa_pin;
 
+        // Fetch user roles via junction table to avoid deep SQL joins that cause lock table exhaustion
+        const userRoles = await UserRole.findAll({
+            where: { user_id: plain.id },
+            raw: true
+        });
+        const roleIds = userRoles.map(ur => ur.role_id).filter(Boolean);
+
+        let roles = [];
+        let permissions = [];
+
+        if (roleIds.length > 0) {
+            roles = await Role.findAll({
+                where: { id: { [Op.in]: roleIds } },
+                raw: true
+            });
+
+            const rolePermissions = await RolePermission.findAll({
+                where: { role_id: { [Op.in]: roleIds } },
+                raw: true
+            });
+            const permissionIds = rolePermissions.map(rp => rp.permission_id).filter(Boolean);
+
+            if (permissionIds.length > 0) {
+                const perms = await Permission.findAll({
+                    where: { id: { [Op.in]: permissionIds } },
+                    raw: true
+                });
+                permissions = perms.map(p => p.name || `${p.module}:${p.action}`);
+            }
+        }
+
         const ONLINE_THRESHOLD_MS = 2 * 60 * 1000;
-        const isOnline = plain.last_active_at ? (Date.now() - new Date(plain.last_active_at).getTime()) < ONLINE_THRESHOLD_MS : false;
-
-        const distinctPerms = Array.from(new Set(
-            (plain.roles || []).flatMap(r =>
-                (r.permissions || []).map(p => (
-                    typeof p === 'string' ? p : p.name || `${p.module}:${p.action}`
-                ))
-            )
-        ));
-
-        const formattedRoles = (plain.roles || []).map(r => ({
-            id: r.id,
-            name: r.name,
-            description: r.description
-        }));
+        const isOnline = plain.last_active_at
+            ? (Date.now() - new Date(plain.last_active_at).getTime()) < ONLINE_THRESHOLD_MS
+            : false;
 
         return {
             ...plain,
             is_online: isOnline,
-            roles: formattedRoles,
-            permissions: distinctPerms
+            roles: roles.map(r => ({
+                id: r.id,
+                name: r.name,
+                description: r.description
+            })),
+            permissions: Array.from(new Set(permissions))
         };
     }
 
     async createUser(data) {
+        const cleanEmail = (data.email || '').trim().toLowerCase();
         const exist = await User.findOne({
-            where: { email: data.email }
+            where: { email: cleanEmail }
         });
 
         if (exist) {
@@ -86,11 +92,12 @@ class UserService {
 
         const user = await User.create({
             name: data.name,
-            email: data.email,
+            email: cleanEmail,
             password: hashedPassword,
             phone: data.phone,
             is_active: true
         });
+
         let role;
         if (data.role_id) {
             role = await Role.findByPk(data.role_id);
@@ -104,11 +111,11 @@ class UserService {
             });
         }
 
-        if (!role) {
-            throw new Error('Role not found');
+        if (role) {
+            await UserRole.findOrCreate({
+                where: { user_id: user.id, role_id: role.id }
+            });
         }
-
-        await user.addRole(role);
 
         return await this.getUserById(user.id);
     }
@@ -116,34 +123,52 @@ class UserService {
     async getAllUsers() {
         const users = await User.findAll({
             attributes: { exclude: ['password', 'two_fa_pin'] },
-            include: [{
-                model: Role,
-                as: 'roles',
-                attributes: ['id', 'name'],
-                through: { attributes: [] }
-            }],
-            order: [['created_at', 'DESC']]
+            order: [['created_at', 'DESC']],
+            raw: true
         });
+        if (!users.length) return [];
+
+        const userIds = users.map(u => u.id);
+        const userRoles = await UserRole.findAll({
+            where: { user_id: { [Op.in]: userIds } },
+            raw: true
+        });
+
+        const roleIds = Array.from(new Set(userRoles.map(ur => ur.role_id).filter(Boolean)));
+        const roles = roleIds.length > 0 ? await Role.findAll({
+            where: { id: { [Op.in]: roleIds } },
+            raw: true
+        }) : [];
+
+        const roleMap = new Map(roles.map(r => [r.id, r]));
+        const userRolesMap = new Map();
+        for (const ur of userRoles) {
+            if (!userRolesMap.has(ur.user_id)) {
+                userRolesMap.set(ur.user_id, []);
+            }
+            const roleObj = roleMap.get(ur.role_id);
+            if (roleObj) {
+                userRolesMap.get(ur.user_id).push({ id: roleObj.id, name: roleObj.name, description: roleObj.description });
+            }
+        }
+
         const ONLINE_THRESHOLD_MS = 2 * 60 * 1000;
         return users.map(u => {
-            const plain = u.toJSON();
-            delete plain.password;
-            delete plain.two_fa_pin;
-            const isOnline = plain.last_active_at ? (Date.now() - new Date(plain.last_active_at).getTime()) < ONLINE_THRESHOLD_MS : false;
+            const isOnline = u.last_active_at
+                ? (Date.now() - new Date(u.last_active_at).getTime()) < ONLINE_THRESHOLD_MS
+                : false;
             return {
-                ...plain,
+                ...u,
                 is_online: isOnline,
-                roles: plain.roles.map(r => ({ id: r.id, name: r.name }))
+                roles: userRolesMap.get(u.id) || []
             };
         });
     }
 
     async getUserById(id) {
-        const user = await User.findByPk(id, {
-            attributes: { exclude: ['password'] },
-            include: [getRoleInclude()]
-        });
-        return this._formatUser(user);
+        const user = await User.findByPk(id);
+        if (!user) return null;
+        return await this._loadUserWithRolesAndPermissions(user);
     }
 
     async updateUser(id, data) {
@@ -153,15 +178,14 @@ class UserService {
             throw new Error('User not found');
         }
 
-        const updateData = {
-            name: data.name,
-            email: data.email,
-            phone: data.phone,
-            is_active: data.is_active,
-            telegram_chat_id: data.telegram_chat_id,
-            two_fa_pin: data.two_fa_pin,
-            two_fa_enabled: data.two_fa_enabled
-        };
+        const updateData = {};
+        if (data.name !== undefined) updateData.name = data.name;
+        if (data.email !== undefined) updateData.email = String(data.email).trim().toLowerCase();
+        if (data.phone !== undefined) updateData.phone = data.phone;
+        if (data.is_active !== undefined) updateData.is_active = data.is_active;
+        if (data.telegram_chat_id !== undefined) updateData.telegram_chat_id = data.telegram_chat_id;
+        if (data.two_fa_pin !== undefined) updateData.two_fa_pin = data.two_fa_pin;
+        if (data.two_fa_enabled !== undefined) updateData.two_fa_enabled = data.two_fa_enabled;
 
         if (data.password) {
             updateData.password = await bcrypt.hash(data.password, 10);
@@ -172,12 +196,14 @@ class UserService {
         if (data.role_id) {
             const role = await Role.findByPk(data.role_id);
             if (role) {
-                await user.setRoles([role]);
+                await UserRole.destroy({ where: { user_id: id } });
+                await UserRole.create({ user_id: id, role_id: role.id });
             }
         } else if (data.role) {
             const role = await Role.findOne({ where: { name: data.role } });
             if (role) {
-                await user.setRoles([role]);
+                await UserRole.destroy({ where: { user_id: id } });
+                await UserRole.create({ user_id: id, role_id: role.id });
             }
         }
 
@@ -191,8 +217,11 @@ class UserService {
             throw new Error('User not found');
         }
 
-        // delete refresh tokens
+        // delete refresh tokens & junction roles
         await RefreshToken.destroy({
+            where: { user_id: id }
+        });
+        await UserRole.destroy({
             where: { user_id: id }
         });
 
@@ -246,9 +275,9 @@ class UserService {
             throw new Error('Could not retrieve email from Google');
         }
 
+        const cleanEmail = googleEmail.trim().toLowerCase();
         let userRecord = await User.findOne({
-            where: { email: googleEmail },
-            include: [getRoleInclude()]
+            where: { email: cleanEmail }
         });
 
         if (!userRecord) {
@@ -257,7 +286,7 @@ class UserService {
 
             const newUser = await User.create({
                 name: googleName,
-                email: googleEmail,
+                email: cleanEmail,
                 password: randomPassword,
                 phone: placeholderPhone,
                 is_active: true
@@ -265,15 +294,13 @@ class UserService {
 
             const customerRole = await Role.findOne({ where: { name: 'customer' } });
             if (customerRole) {
-                await newUser.addRole(customerRole);
+                await UserRole.create({ user_id: newUser.id, role_id: customerRole.id });
             }
 
-            userRecord = await User.findByPk(newUser.id, {
-                include: [getRoleInclude()]
-            });
+            userRecord = await User.findByPk(newUser.id);
         }
 
-        const formattedUser = this._formatUser(userRecord);
+        const formattedUser = await this._loadUserWithRolesAndPermissions(userRecord);
 
         const accessToken = generateAccessToken(formattedUser);
         const refreshToken = generateRefreshToken(formattedUser);
@@ -284,7 +311,7 @@ class UserService {
             expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
         });
 
-        const roleNames = (formattedUser.roles || []).map(r => r.name.toLowerCase());
+        const roleNames = (formattedUser.roles || []).map(r => (r.name || '').toLowerCase());
         const isStaffOrAdmin = roleNames.some(role =>
             role !== 'customer' &&
             (role.includes('admin') ||
@@ -314,9 +341,9 @@ class UserService {
     }
 
     async login(data) {
+        const email = (data.email || '').trim().toLowerCase();
         const user = await User.findOne({
-            where: { email: data.email },
-            include: [getRoleInclude()]
+            where: { email }
         });
 
         if (!user) {
@@ -332,9 +359,9 @@ class UserService {
             throw new Error('Invalid email or password');
         }
 
-        const formattedUser = this._formatUser(user);
+        const formattedUser = await this._loadUserWithRolesAndPermissions(user);
 
-        const roleNames = (formattedUser.roles || []).map(r => r.name.toLowerCase());
+        const roleNames = (formattedUser.roles || []).map(r => (r.name || '').toLowerCase());
         const isStaffOrAdmin = roleNames.some(role =>
             role !== 'customer' &&
             (role.includes('admin') ||
@@ -389,12 +416,12 @@ class UserService {
             throw new Error('2FA is not configured for this account');
         }
 
-        const isMatch = await bcrypt.compare(pin, user.two_fa_pin);
+        const isMatch = await bcrypt.compare(String(pin).trim(), user.two_fa_pin);
         if (!isMatch) {
             throw new Error('Invalid 2FA PIN');
         }
 
-        const formattedUser = this._formatUser(user);
+        const formattedUser = await this._loadUserWithRolesAndPermissions(user);
 
         const accessToken = generateAccessToken(formattedUser);
         const refreshToken = generateRefreshToken(formattedUser);
@@ -466,15 +493,12 @@ class UserService {
             throw new Error('Refresh token expired');
         }
 
-        const user = await User.findByPk(decoded.id, {
-            include: [getRoleInclude()]
-        });
-
+        const user = await User.findByPk(decoded.id);
         if (!user) {
             throw new Error('User not found');
         }
 
-        const formattedUser = this._formatUser(user);
+        const formattedUser = await this._loadUserWithRolesAndPermissions(user);
         const newAccessToken = generateAccessToken(formattedUser);
 
         return {
@@ -498,7 +522,6 @@ class UserService {
         }
 
         const isMatch = await bcrypt.compare(oldPassword, user.password);
-
         if (!isMatch) {
             throw new Error('Old password incorrect');
         }
@@ -652,7 +675,7 @@ class UserService {
             is_used: false
         });
 
-        const msg = `🔐 *Angkor Shopping Mall - Password Reset*\n\nYour OTP code is: *${otpCode}*\n\nThis code expires in 10 minutes.\nDo not share this code with anyone.`;
+        const msg = `⚡ *Angkor Shopping Mall - Password Reset*\n\nYour OTP code is: *${otpCode}*\n\nThis code expires in 10 minutes.\nDo not share this code with anyone.`;
         await telegramService.sendMessage(user.telegram_chat_id, msg);
 
         return {
@@ -752,55 +775,82 @@ class UserService {
     }
 
     async getStaffUsers() {
-        const users = await User.findAll({
-            attributes: { exclude: ['password', 'two_fa_pin'] },
-            include: [{
-                model: Role,
-                as: 'roles',
-                attributes: ['id', 'name'],
-                through: { attributes: [] },
-                where: { name: { [Op.ne]: 'customer' } },
-                required: true
-            }],
-            order: [['created_at', 'DESC']]
+        const staffRoles = await Role.findAll({
+            where: { name: { [Op.ne]: 'customer' } },
+            raw: true
         });
+        if (!staffRoles.length) return [];
+
+        const staffRoleIds = staffRoles.map(r => r.id);
+        const userRoles = await UserRole.findAll({
+            where: { role_id: { [Op.in]: staffRoleIds } },
+            raw: true
+        });
+        if (!userRoles.length) return [];
+
+        const staffUserIds = Array.from(new Set(userRoles.map(ur => ur.user_id).filter(Boolean)));
+        const users = await User.findAll({
+            where: { id: { [Op.in]: staffUserIds } },
+            attributes: { exclude: ['password', 'two_fa_pin'] },
+            order: [['created_at', 'DESC']],
+            raw: true
+        });
+
+        const roleMap = new Map(staffRoles.map(r => [r.id, r]));
+        const userRolesMap = new Map();
+        for (const ur of userRoles) {
+            if (!userRolesMap.has(ur.user_id)) {
+                userRolesMap.set(ur.user_id, []);
+            }
+            const roleObj = roleMap.get(ur.role_id);
+            if (roleObj) {
+                userRolesMap.get(ur.user_id).push({ id: roleObj.id, name: roleObj.name, description: roleObj.description });
+            }
+        }
+
         const ONLINE_THRESHOLD_MS = 2 * 60 * 1000;
         return users.map(u => {
-            const plain = u.toJSON();
-            delete plain.password;
-            delete plain.two_fa_pin;
-            const isOnline = plain.last_active_at ? (Date.now() - new Date(plain.last_active_at).getTime()) < ONLINE_THRESHOLD_MS : false;
+            const isOnline = u.last_active_at
+                ? (Date.now() - new Date(u.last_active_at).getTime()) < ONLINE_THRESHOLD_MS
+                : false;
             return {
-                ...plain,
+                ...u,
                 is_online: isOnline,
-                roles: plain.roles.map(r => ({ id: r.id, name: r.name }))
+                roles: userRolesMap.get(u.id) || []
             };
         });
     }
 
     async getCustomers() {
-        const users = await User.findAll({
-            attributes: { exclude: ['password', 'two_fa_pin'] },
-            include: [{
-                model: Role,
-                as: 'roles',
-                attributes: ['id', 'name'],
-                through: { attributes: [] },
-                where: { name: 'customer' },
-                required: true
-            }],
-            order: [['created_at', 'DESC']]
+        const customerRole = await Role.findOne({
+            where: { name: 'customer' },
+            raw: true
         });
+        if (!customerRole) return [];
+
+        const userRoles = await UserRole.findAll({
+            where: { role_id: customerRole.id },
+            raw: true
+        });
+        if (!userRoles.length) return [];
+
+        const customerUserIds = Array.from(new Set(userRoles.map(ur => ur.user_id).filter(Boolean)));
+        const users = await User.findAll({
+            where: { id: { [Op.in]: customerUserIds } },
+            attributes: { exclude: ['password', 'two_fa_pin'] },
+            order: [['created_at', 'DESC']],
+            raw: true
+        });
+
         const ONLINE_THRESHOLD_MS = 2 * 60 * 1000;
         return users.map(u => {
-            const plain = u.toJSON();
-            delete plain.password;
-            delete plain.two_fa_pin;
-            const isOnline = plain.last_active_at ? (Date.now() - new Date(plain.last_active_at).getTime()) < ONLINE_THRESHOLD_MS : false;
+            const isOnline = u.last_active_at
+                ? (Date.now() - new Date(u.last_active_at).getTime()) < ONLINE_THRESHOLD_MS
+                : false;
             return {
-                ...plain,
+                ...u,
                 is_online: isOnline,
-                roles: plain.roles.map(r => ({ id: r.id, name: r.name }))
+                roles: [{ id: customerRole.id, name: customerRole.name, description: customerRole.description }]
             };
         });
     }
