@@ -55,16 +55,17 @@ class RoleService {
 
         // Find permissions matching IDs or Names
         const found = await Permission.findAll({
-            where: conditions.length === 1 ? conditions[0] : { [Op.or]: conditions }
+            where: conditions.length === 1 ? conditions[0] : { [Op.or]: conditions },
+            raw: true
         });
 
         return found;
     }
 
-    _formatRole(role) {
+    _formatRole(role, permissionsList = []) {
         if (!role) return null;
         const plain = role.toJSON ? role.toJSON() : { ...role };
-        const perms = (plain.permissions || []).map(p => (typeof p === 'string' ? p : p.name || `${p.module}:${p.action}`));
+        const perms = (permissionsList || plain.permissions || []).map(p => (typeof p === 'string' ? p : p.name || `${p.module}:${p.action}`));
         return {
             id: plain.id,
             name: plain.name,
@@ -86,7 +87,13 @@ class RoleService {
 
         if (data.permissions !== undefined) {
             const permissionsToAssign = await this._resolvePermissions(data.permissions);
-            await role.setPermissions(permissionsToAssign);
+            if (permissionsToAssign.length > 0) {
+                const rpRecords = permissionsToAssign.map(p => ({
+                    role_id: role.id,
+                    permission_id: p.id
+                }));
+                await RolePermission.bulkCreate(rpRecords, { ignoreDuplicates: true });
+            }
         }
 
         return await this.getRoleById(role.id);
@@ -94,29 +101,46 @@ class RoleService {
 
     async getAllRoles() {
         const roles = await Role.findAll({
-            include: [{
-                model: Permission,
-                as: 'permissions',
-                attributes: ['id', 'name', 'module', 'action'],
-                through: { attributes: [] }
-            }],
-            order: [['created_at', 'DESC']]
+            order: [['created_at', 'DESC']],
+            raw: true
         });
 
-        return roles.map(r => this._formatRole(r));
+        const rps = await RolePermission.findAll({ raw: true });
+        const perms = await Permission.findAll({ raw: true });
+
+        const permMap = new Map();
+        perms.forEach(p => permMap.set(p.id, p.name || `${p.module}:${p.action}`));
+
+        const rolePermsMap = new Map();
+        rps.forEach(rp => {
+            if (!rolePermsMap.has(rp.role_id)) rolePermsMap.set(rp.role_id, []);
+            const pName = permMap.get(rp.permission_id);
+            if (pName) rolePermsMap.get(rp.role_id).push(pName);
+        });
+
+        return roles.map(r => this._formatRole(r, rolePermsMap.get(r.id) || []));
     }
 
     async getRoleById(id) {
-        const role = await Role.findByPk(id, {
-            include: [{
-                model: Permission,
-                as: 'permissions',
-                attributes: ['id', 'name', 'module', 'action'],
-                through: { attributes: [] }
-            }]
+        const role = await Role.findByPk(id, { raw: true });
+        if (!role) return null;
+
+        const rps = await RolePermission.findAll({
+            where: { role_id: id },
+            raw: true
         });
 
-        return this._formatRole(role);
+        const permIds = rps.map(rp => rp.permission_id);
+        let permNames = [];
+        if (permIds.length > 0) {
+            const perms = await Permission.findAll({
+                where: { id: { [Op.in]: permIds } },
+                raw: true
+            });
+            permNames = perms.map(p => p.name || `${p.module}:${p.action}`);
+        }
+
+        return this._formatRole(role, permNames);
     }
 
     async updateRole(id, data) {
@@ -135,7 +159,14 @@ class RoleService {
 
         if (data.permissions !== undefined) {
             const permissionsToAssign = await this._resolvePermissions(data.permissions);
-            await role.setPermissions(permissionsToAssign);
+            await RolePermission.destroy({ where: { role_id: id } });
+            if (permissionsToAssign.length > 0) {
+                const rpRecords = permissionsToAssign.map(p => ({
+                    role_id: id,
+                    permission_id: p.id
+                }));
+                await RolePermission.bulkCreate(rpRecords, { ignoreDuplicates: true });
+            }
         }
 
         return await this.getRoleById(id);
@@ -148,6 +179,7 @@ class RoleService {
             throw new Error('Role not found');
         }
 
+        await RolePermission.destroy({ where: { role_id: id } });
         await role.destroy();
 
         return true;
@@ -155,10 +187,10 @@ class RoleService {
 
     async getAllPermissions() {
         const permissions = await Permission.findAll({
-            order: [['module', 'ASC'], ['action', 'ASC']]
+            order: [['module', 'ASC'], ['action', 'ASC']],
+            raw: true
         });
 
-        // Group by module for easy frontend rendering while also providing flat list
         const grouped = {};
         for (const p of permissions) {
             if (!grouped[p.module]) {

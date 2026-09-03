@@ -29,22 +29,32 @@ class SupportMessageController {
             let phone = sender_phone;
 
             if (userId) {
-                const user = await User.findByPk(userId);
-                if (user) {
-                    name = name || user.name || 'Registered Customer';
-                    email = email || user.email;
-                    phone = phone || user.phone;
+                try {
+                    const user = await User.findByPk(userId, { attributes: ['id', 'name', 'email', 'phone'], raw: true });
+                    if (user) {
+                        name = name || user.name || 'Registered Customer';
+                        email = email || user.email;
+                        phone = phone || user.phone;
+                    }
+                } catch (e) {
+                    // Ignore user lookup error
                 }
             }
 
             name = name || 'Guest Customer';
 
             // 1. Analyze sentiment and generate AI summary + auto suggested reply
-            const analysis = await aiProviderService.analyzeInquiry(message);
-            const aiSuggestedReply = await aiProviderService.generateAdminDraftReply(message, {
-                sender_name: name,
-                subject: subject
-            });
+            let analysis = { sentiment: 'neutral', summary: 'Customer support request' };
+            let aiSuggestedReply = '';
+            try {
+                analysis = await aiProviderService.analyzeInquiry(message);
+                aiSuggestedReply = await aiProviderService.generateAdminDraftReply(message, {
+                    sender_name: name,
+                    subject: subject
+                });
+            } catch (aiErr) {
+                console.warn('[SupportMessageController] AI analysis warning:', aiErr.message);
+            }
 
             // 2. Create message in DB
             const supportMsg = await SupportMessage.create({
@@ -64,7 +74,7 @@ class SupportMessageController {
             // 3. Optional: Notify Admin via Telegram if bot is configured
             try {
                 if (bot && process.env.TELEGRAM_ADMIN_CHAT_ID) {
-                    const telegramText = `📩 *New Customer Support Message*\n\n*From:* ${name} (${email || phone || 'No contact'})\n*Subject:* ${subject}\n*Sentiment:* ${analysis.sentiment.toUpperCase()}\n*Summary:* ${analysis.summary}\n\n*Message:*\n${message}`;
+                    const telegramText = `💬 *New Customer Support Message*\n\n*From:* ${name} (${email || phone || 'No contact'})\n*Subject:* ${subject}\n*Sentiment:* ${analysis.sentiment.toUpperCase()}\n*Summary:* ${analysis.summary}\n\n*Message:*\n${message}`;
                     bot.sendMessage(process.env.TELEGRAM_ADMIN_CHAT_ID, telegramText, { parse_mode: 'Markdown' }).catch(() => {});
                 }
             } catch (e) {}
@@ -102,36 +112,42 @@ class SupportMessageController {
                 ];
             }
 
-            // Single-table count and pagination to prevent PostgreSQL lock memory exhaustion
-            const [count, rows] = await Promise.all([
-                SupportMessage.count({ where }),
-                SupportMessage.findAll({
-                    where,
-                    order: [
-                        ['status', 'ASC'], // 'unread' first
-                        ['created_at', 'DESC']
-                    ],
-                    limit: parsedLimit,
-                    offset: offset
-                })
-            ]);
+            // Single query with findAndCountAll to avoid multi-connection lock contention
+            const result = await SupportMessage.findAndCountAll({
+                where,
+                order: [
+                    ['status', 'ASC'],
+                    ['created_at', 'DESC']
+                ],
+                limit: parsedLimit,
+                offset: offset,
+                raw: true
+            });
 
-            // Lightweight population of user & admin objects
+            const count = result.count;
+            const rows = result.rows || [];
+
+            // Safe population of user & admin info
             const userIds = [...new Set(rows.map(r => r.user_id).filter(Boolean))];
             const adminIds = [...new Set(rows.map(r => r.admin_id).filter(Boolean))];
             const allUserIds = [...new Set([...userIds, ...adminIds])];
 
             let userMap = new Map();
             if (allUserIds.length > 0) {
-                const users = await User.findAll({
-                    where: { id: allUserIds },
-                    attributes: ['id', 'name', 'email', 'phone']
-                });
-                users.forEach(u => userMap.set(u.id, u.toJSON ? u.toJSON() : u));
+                try {
+                    const users = await User.findAll({
+                        where: { id: allUserIds },
+                        attributes: ['id', 'name', 'email', 'phone'],
+                        raw: true
+                    });
+                    users.forEach(u => userMap.set(u.id, u));
+                } catch (userErr) {
+                    console.warn('[SupportMessageController] User mapping skipped:', userErr.message);
+                }
             }
 
             const messages = rows.map(r => {
-                const item = r.toJSON ? r.toJSON() : { ...r };
+                const item = { ...r };
                 item.user = item.user_id ? userMap.get(item.user_id) || null : null;
                 item.admin = item.admin_id ? userMap.get(item.admin_id) || null : null;
                 return item;
@@ -172,17 +188,27 @@ class SupportMessageController {
 
             // Fetch user and admin details
             if (message.user_id) {
-                messageData.user = await User.findByPk(message.user_id, {
-                    attributes: ['id', 'name', 'email', 'phone', 'created_at']
-                });
+                try {
+                    messageData.user = await User.findByPk(message.user_id, {
+                        attributes: ['id', 'name', 'email', 'phone', 'created_at'],
+                        raw: true
+                    });
+                } catch (e) {
+                    messageData.user = null;
+                }
             } else {
                 messageData.user = null;
             }
 
             if (message.admin_id) {
-                messageData.admin = await User.findByPk(message.admin_id, {
-                    attributes: ['id', 'name', 'email']
-                });
+                try {
+                    messageData.admin = await User.findByPk(message.admin_id, {
+                        attributes: ['id', 'name', 'email'],
+                        raw: true
+                    });
+                } catch (e) {
+                    messageData.admin = null;
+                }
             } else {
                 messageData.admin = null;
             }
@@ -190,11 +216,16 @@ class SupportMessageController {
             // Fetch user's recent orders if logged in user
             let recentOrders = [];
             if (message.user_id) {
-                recentOrders = await Order.findAll({
-                    where: { user_id: message.user_id },
-                    order: [['created_at', 'DESC']],
-                    limit: 3
-                });
+                try {
+                    recentOrders = await Order.findAll({
+                        where: { user_id: message.user_id },
+                        order: [['created_at', 'DESC']],
+                        limit: 3,
+                        raw: true
+                    });
+                } catch (e) {
+                    recentOrders = [];
+                }
             }
 
             return successResponse(res, 'Message details fetched successfully', {
@@ -222,13 +253,16 @@ class SupportMessageController {
             }
 
             const message = await SupportMessage.findByPk(id);
-            let validAdminId = null;
-            if (adminId) {
-                const existingAdmin = await User.findByPk(adminId);
-                if (existingAdmin) validAdminId = adminId;
-            }
             if (!message) {
                 return errorResponse(res, 'Message not found', 404);
+            }
+
+            let validAdminId = null;
+            if (adminId) {
+                try {
+                    const existingAdmin = await User.findByPk(adminId, { raw: true });
+                    if (existingAdmin) validAdminId = adminId;
+                } catch (e) {}
             }
 
             message.admin_reply = reply.trim();
@@ -288,7 +322,8 @@ class SupportMessageController {
             const messages = await SupportMessage.findAll({
                 where: { user_id: userId },
                 order: [['created_at', 'DESC']],
-                limit: 20
+                limit: 20,
+                raw: true
             });
 
             return successResponse(res, 'My support messages fetched successfully', messages);
@@ -304,10 +339,12 @@ class SupportMessageController {
      */
     async getStats(req, res) {
         try {
-            const total = await SupportMessage.count();
-            const unread = await SupportMessage.count({ where: { status: 'unread' } });
-            const inProgress = await SupportMessage.count({ where: { status: 'in_progress' } });
-            const replied = await SupportMessage.count({ where: { status: 'replied' } });
+            const [total, unread, inProgress, replied] = await Promise.all([
+                SupportMessage.count(),
+                SupportMessage.count({ where: { status: 'unread' } }),
+                SupportMessage.count({ where: { status: 'in_progress' } }),
+                SupportMessage.count({ where: { status: 'replied' } })
+            ]);
 
             return successResponse(res, 'Support stats fetched successfully', {
                 total,
@@ -347,7 +384,8 @@ class SupportMessageController {
             const messages = await SupportMessage.findAll({
                 where: { [Op.or]: whereConditions },
                 order: [['created_at', 'DESC']],
-                limit: 20
+                limit: 20,
+                raw: true
             });
 
             return successResponse(res, 'Messages tracked successfully', messages);
@@ -356,7 +394,6 @@ class SupportMessageController {
             return errorResponse(res, 'Failed to track messages', 500);
         }
     }
-
 }
 
 module.exports = new SupportMessageController();

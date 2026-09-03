@@ -1,7 +1,13 @@
-﻿const { Sequelize } = require('sequelize');
+const { Sequelize } = require('sequelize');
 require('dotenv').config();
 
-const sequelize = new Sequelize(process.env.DATABASE_URL, {
+let dbUrl = process.env.DATABASE_URL || '';
+// When using Supabase pooler on session mode (:5432), automatically route to transaction pooler (:6543) to prevent PostgreSQL transaction lock table exhaustion
+if (dbUrl.includes('pooler.supabase.com:5432')) {
+    dbUrl = dbUrl.replace(':5432', ':6543');
+}
+
+const sequelize = new Sequelize(dbUrl, {
     dialect: 'postgres',
     logging: false,
     pool: {
