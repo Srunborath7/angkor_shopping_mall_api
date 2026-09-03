@@ -1,4 +1,4 @@
-const Role = require('../models/roleModel');
+﻿const Role = require('../models/roleModel');
 const Permission = require('../models/permissionModel');
 const RolePermission = require('../models/rolePermissionModel');
 
@@ -98,85 +98,97 @@ const DEFAULT_PERMISSIONS = [
 ];
 
 async function seedPermissions() {
-    console.log('[RBAC Seeder] Seeding permissions into database...');
+    try {
+        console.log('[RBAC Seeder] Seeding permissions into database...');
 
-    const permRows = DEFAULT_PERMISSIONS.map(item => ({
-        name: `${item.module}:${item.action}`,
-        module: item.module,
-        action: item.action,
-        description: item.description,
-    }));
+        const permRows = DEFAULT_PERMISSIONS.map(item => ({
+            name: `${item.module}:${item.action}`,
+            module: item.module,
+            action: item.action,
+            description: item.description,
+        }));
 
-    await Permission.bulkCreate(permRows, {
-        updateOnDuplicate: ['module', 'action', 'description']
-    });
-
-    const allPerms = await Permission.findAll();
-    console.log(`[RBAC Seeder] Total ${allPerms.length} permissions available in DB.`);
-
-    const permMap = {};
-    for (const p of allPerms) {
-        permMap[p.name] = p.id;
-    }
-
-    const roleDefinitions = {
-        admin: Object.keys(permMap),
-        manager: [
-            'dashboard:view',
-            'products:view', 'products:create', 'products:update', 'products:delete',
-            'categories:view', 'categories:create', 'categories:update', 'categories:delete',
-            'brands:view', 'brands:create', 'brands:update', 'brands:delete',
-            'flash_sale:view', 'flash_sale:create', 'flash_sale:update', 'flash_sale:delete',
-            'trading:view', 'trading:create', 'trading:update', 'trading:approve',
-            'orders:view', 'orders:process', 'orders:update',
-            'messages:view', 'messages:reply',
-            'inventory:view', 'inventory:update',
-            'purchases:view', 'purchases:create', 'purchases:update',
-            'suppliers:view', 'suppliers:create', 'suppliers:update',
-            'attendance:view', 'attendance:checkin', 'attendance:approve',
-            'customers:view', 'customers:create', 'customers:update',
-            'reports:view', 'reports:export',
-            'settings:view',
-            'users:view',
-            'roles:view'
-        ],
-        staff: [
-            'dashboard:view',
-            'products:view',
-            'orders:view', 'orders:process',
-            'attendance:view', 'attendance:checkin',
-            'inventory:view',
-            'messages:view', 'messages:reply'
-        ],
-        customer: []
-    };
-
-    const rolePermRows = [];
-    for (const [roleName, permNames] of Object.entries(roleDefinitions)) {
-        let [role] = await Role.findOrCreate({
-            where: { name: roleName },
-            defaults: {
-                name: roleName,
-                description: `${roleName.charAt(0).toUpperCase() + roleName.slice(1)} role`
-            }
-        });
-
-        const targetPermIds = permNames.map(name => permMap[name]).filter(Boolean);
-        for (const permId of targetPermIds) {
-            rolePermRows.push({
-                role_id: role.id,
-                permission_id: permId
+        // Batch in chunks to prevent PostgreSQL 'out of shared memory' lock exhaustion
+        const chunkSize = 20;
+        for (let i = 0; i < permRows.length; i += chunkSize) {
+            const chunk = permRows.slice(i, i + chunkSize);
+            await Permission.bulkCreate(chunk, {
+                updateOnDuplicate: ['module', 'action', 'description']
             });
         }
-    }
 
-    if (rolePermRows.length > 0) {
-        await RolePermission.bulkCreate(rolePermRows, {
-            ignoreDuplicates: true
-        });
-    }
+        const allPerms = await Permission.findAll();
+        console.log(`[RBAC Seeder] Total ${allPerms.length} permissions available in DB.`);
 
-    console.log('[RBAC Seeder] Roles and role_permissions synchronized successfully.');
+        const permMap = {};
+        for (const p of allPerms) {
+            permMap[p.name] = p.id;
+        }
+
+        const roleDefinitions = {
+            admin: Object.keys(permMap),
+            manager: [
+                'dashboard:view',
+                'products:view', 'products:create', 'products:update', 'products:delete',
+                'categories:view', 'categories:create', 'categories:update', 'categories:delete',
+                'brands:view', 'brands:create', 'brands:update', 'brands:delete',
+                'flash_sale:view', 'flash_sale:create', 'flash_sale:update', 'flash_sale:delete',
+                'trading:view', 'trading:create', 'trading:update', 'trading:approve',
+                'orders:view', 'orders:process', 'orders:update',
+                'messages:view', 'messages:reply',
+                'inventory:view', 'inventory:update',
+                'purchases:view', 'purchases:create', 'purchases:update',
+                'suppliers:view', 'suppliers:create', 'suppliers:update',
+                'attendance:view', 'attendance:checkin', 'attendance:approve',
+                'customers:view', 'customers:create', 'customers:update',
+                'reports:view', 'reports:export',
+                'settings:view',
+                'users:view',
+                'roles:view'
+            ],
+            staff: [
+                'dashboard:view',
+                'products:view',
+                'orders:view', 'orders:process',
+                'attendance:view', 'attendance:checkin',
+                'inventory:view',
+                'messages:view', 'messages:reply'
+            ],
+            customer: []
+        };
+
+        const rolePermRows = [];
+        for (const [roleName, permNames] of Object.entries(roleDefinitions)) {
+            let [role] = await Role.findOrCreate({
+                where: { name: roleName },
+                defaults: {
+                    name: roleName,
+                    description: `${roleName.charAt(0).toUpperCase() + roleName.slice(1)} role`
+                }
+            });
+
+            const targetPermIds = permNames.map(name => permMap[name]).filter(Boolean);
+            for (const permId of targetPermIds) {
+                rolePermRows.push({
+                    role_id: role.id,
+                    permission_id: permId
+                });
+            }
+        }
+
+        if (rolePermRows.length > 0) {
+            for (let i = 0; i < rolePermRows.length; i += chunkSize) {
+                const chunk = rolePermRows.slice(i, i + chunkSize);
+                await RolePermission.bulkCreate(chunk, {
+                    ignoreDuplicates: true
+                });
+            }
+        }
+
+        console.log('[RBAC Seeder] Roles and role_permissions synchronized successfully.');
+    } catch (error) {
+        console.error('[RBAC Seeder] Seeding warning:', error.message);
+    }
 }
 
 module.exports = {
