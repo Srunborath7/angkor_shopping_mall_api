@@ -1,4 +1,4 @@
-const express = require("express");
+﻿const express = require("express");
 const cors = require("cors");
 const path = require("path");
 
@@ -6,13 +6,26 @@ const app = express();
 
 require("./models/relationships");
 
+const allowedOrigins = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5174",
+    "http://127.0.0.1:3000",
+    "https://angkorshoppingmall.netlify.app"
+];
+
 app.use(
     cors({
-        origin: [
-            "http://localhost:5173",
-            "http://127.0.0.1:5173",
-            "https://angkorshoppingmall.netlify.app"
-        ],
+        origin: function (origin, callback) {
+            // Allow requests with no origin (like mobile apps, curl, server-to-server)
+            if (!origin || allowedOrigins.indexOf(origin) !== -1 || origin.includes("netlify.app") || origin.includes("localhost")) {
+                callback(null, true);
+            } else {
+                callback(null, true);
+            }
+        },
         methods: [
             "GET",
             "POST",
@@ -40,6 +53,15 @@ app.post(
     "/telegram/webhook",
     handleTelegramWebhook
 );
+
+// Health check endpoint for Render / Uptime monitors
+app.get("/health", (req, res) => {
+    res.status(200).json({ status: "healthy", timestamp: new Date().toISOString() });
+});
+
+app.get("/api/health", (req, res) => {
+    res.status(200).json({ status: "healthy", timestamp: new Date().toISOString() });
+});
 
 const roleRoutes = require("./routes/roleRoute");
 const userRoutes = require("./routes/userRoute");

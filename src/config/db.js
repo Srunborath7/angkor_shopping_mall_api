@@ -1,4 +1,4 @@
-const { Sequelize } = require('sequelize');
+﻿const { Sequelize } = require('sequelize');
 require('dotenv').config();
 
 const sequelize = new Sequelize(process.env.DATABASE_URL, {
@@ -8,13 +8,16 @@ const sequelize = new Sequelize(process.env.DATABASE_URL, {
         max: 10,
         min: 0,
         acquire: 60000,
-        idle: 10000
+        idle: 10000,
+        evict: 10000
     },
     dialectOptions: {
         ssl: {
             require: true,
             rejectUnauthorized: false
-        }
+        },
+        keepAlive: true,
+        statement_timeout: 45000
     },
     retry: {
         max: 3,
