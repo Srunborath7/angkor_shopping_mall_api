@@ -2,7 +2,8 @@ const userService = require('../services/userService');
 
 const {
     successResponse,
-    errorResponse
+    errorResponse,
+    handleControllerError
 } = require('../utils/response');
 
 class UserController {
@@ -18,7 +19,7 @@ class UserController {
             );
 
         } catch (error) {
-            return errorResponse(res, error.message);
+            return handleControllerError(res, error, 'Failed to create user');
         }
     }
 
@@ -33,7 +34,7 @@ class UserController {
             );
 
         } catch (error) {
-            return errorResponse(res, error.message);
+            return handleControllerError(res, error, error.message);
         }
     }
 
@@ -43,7 +44,7 @@ class UserController {
             const user = await userService.getUserById(req.params.id);
 
             if (!user) {
-                return errorResponse(res, 'User not found');
+                return errorResponse(res, 'User not found', 404);
             }
 
             return successResponse(
@@ -53,7 +54,7 @@ class UserController {
             );
 
         } catch (error) {
-            return errorResponse(res, error.message);
+            return handleControllerError(res, error, error.message);
         }
     }
 
@@ -72,7 +73,7 @@ class UserController {
             );
 
         } catch (error) {
-            return errorResponse(res, error.message);
+            return handleControllerError(res, error, 'Failed to update user');
         }
     }
 
@@ -87,7 +88,7 @@ class UserController {
             );
 
         } catch (error) {
-            return errorResponse(res, error.message);
+            return handleControllerError(res, error, error.message);
         }
     }
 
@@ -101,7 +102,7 @@ class UserController {
                 result
             );
         } catch (error) {
-            return errorResponse(res, error.message);
+            return handleControllerError(res, error, error.message);
         }
     }
 
@@ -117,7 +118,7 @@ class UserController {
             );
 
         } catch (error) {
-            return errorResponse(res, error.message);
+            return handleControllerError(res, error, error.message);
         }
     }
 
@@ -134,7 +135,7 @@ class UserController {
             );
 
         } catch (error) {
-            return errorResponse(res, error.message);
+            return handleControllerError(res, error, error.message);
         }
     }
 
@@ -152,7 +153,7 @@ class UserController {
             );
 
         } catch (error) {
-            return errorResponse(res, error.message);
+            return handleControllerError(res, error, error.message);
         }
     }
 
@@ -169,7 +170,7 @@ class UserController {
             );
 
         } catch (error) {
-            return errorResponse(res, error.message);
+            return handleControllerError(res, error, error.message);
         }
     }
 
@@ -191,7 +192,7 @@ class UserController {
             );
 
         } catch (error) {
-            return errorResponse(res, error.message);
+            return handleControllerError(res, error, error.message);
         }
     }
 
@@ -212,7 +213,7 @@ class UserController {
             );
 
         } catch (error) {
-            return errorResponse(res, error.message);
+            return handleControllerError(res, error, error.message);
         }
     }
 
@@ -233,7 +234,7 @@ class UserController {
             );
 
         } catch (error) {
-            return errorResponse(res, error.message);
+            return handleControllerError(res, error, error.message);
         }
     }
     async sendResetOtp(req, res) {
@@ -244,7 +245,7 @@ class UserController {
             return successResponse(res, 'OTP sent', result);
 
         } catch (error) {
-            return errorResponse(res, error.message);
+            return handleControllerError(res, error, error.message);
         }
     }
 
@@ -258,7 +259,7 @@ class UserController {
             return successResponse(res, 'OTP verified', result);
 
         } catch (error) {
-            return errorResponse(res, error.message);
+            return handleControllerError(res, error, error.message);
         }
     }
 
@@ -268,7 +269,7 @@ class UserController {
             const result = await userService.resetPassword(resetToken, newPassword);
             return successResponse(res, "Password reset success", result);
         } catch (err) {
-            return errorResponse(res, err.message);
+            return handleControllerError(res, err, err.message);
         }
     }
     async sendResetOtpTelegram(req, res) {
@@ -276,7 +277,7 @@ class UserController {
             const result = await userService.sendResetOtpTelegram(req.body.phone);
             return successResponse(res, "OTP sent", result);
         } catch (err) {
-            return errorResponse(res, err.message);
+            return handleControllerError(res, err, err.message);
         }
     }
 
@@ -291,7 +292,7 @@ class UserController {
                 result
             );
         } catch (error) {
-            return errorResponse(res, error.message);
+            return handleControllerError(res, error, error.message);
         }
     }
 
@@ -303,7 +304,7 @@ class UserController {
             );
             return successResponse(res, "Password reset success", result);
         } catch (err) {
-            return errorResponse(res, err.message);
+            return handleControllerError(res, err, err.message);
         }
     }
 
@@ -319,7 +320,7 @@ class UserController {
                 'Password updated successfully'
             );
         } catch (error) {
-            return errorResponse(res, error.message);
+            return handleControllerError(res, error, error.message);
         }
     }
 
@@ -333,7 +334,7 @@ class UserController {
                 staff
             );
         } catch (error) {
-            return errorResponse(res, error.message);
+            return handleControllerError(res, error, error.message);
         }
     }
 
@@ -360,7 +361,7 @@ class UserController {
                 customers
             );
         } catch (error) {
-            return errorResponse(res, error.message);
+            return handleControllerError(res, error, error.message);
         }
     }
 }

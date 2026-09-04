@@ -79,22 +79,73 @@ class UserService {
     }
 
     async createUser(data) {
-        const cleanEmail = (data.email || '').trim().toLowerCase();
-        const exist = await User.findOne({
-            where: { email: cleanEmail }
-        });
+        const errors = {};
 
-        if (exist) {
-            throw new Error('Email already exists');
+        // 1. Name validation
+        const name = (data.name !== undefined && data.name !== null) ? String(data.name).trim() : '';
+        if (!name) {
+            errors.name = 'Name is required';
+        } else if (name.length < 2) {
+            errors.name = 'Name must be at least 2 characters';
+        } else if (name.length > 50) {
+            errors.name = 'Name must not exceed 50 characters';
         }
 
-        const hashedPassword = await bcrypt.hash(data.password, 10);
+        // 2. Email validation
+        const email = (data.email !== undefined && data.email !== null) ? String(data.email).trim().toLowerCase() : '';
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!email) {
+            errors.email = 'Email is required';
+        } else if (!emailRegex.test(email)) {
+            errors.email = 'Please provide a valid email address';
+        }
+
+        // 3. Password validation
+        const password = (data.password !== undefined && data.password !== null) ? String(data.password) : '';
+        if (!password) {
+            errors.password = 'Password is required';
+        } else if (password.length < 6) {
+            errors.password = 'Password must be at least 6 characters';
+        }
+
+        // 4. Phone validation
+        const phone = (data.phone !== undefined && data.phone !== null) ? String(data.phone).trim() : '';
+        if (!phone) {
+            errors.phone = 'Phone number is required';
+        } else if (!/^[0-9+()\-\s]{8,20}$/.test(phone)) {
+            errors.phone = 'Please provide a valid phone number';
+        }
+
+        // Check uniqueness if fields are valid so far
+        if (email && !errors.email) {
+            const existEmail = await User.findOne({ where: { email } });
+            if (existEmail) {
+                errors.email = 'Email is already registered';
+            }
+        }
+
+        if (phone && !errors.phone) {
+            const existPhone = await User.findOne({ where: { phone } });
+            if (existPhone) {
+                errors.phone = 'Phone number is already registered';
+            }
+        }
+
+        if (Object.keys(errors).length > 0) {
+            const firstMsg = Object.values(errors)[0];
+            const error = new Error(firstMsg);
+            error.status = 400;
+            error.errors = errors;
+            throw error;
+        }
+
+        const hashedPassword = await bcrypt.hash(password, 10);
 
         const user = await User.create({
-            name: data.name,
-            email: cleanEmail,
+            name,
+            email,
             password: hashedPassword,
-            phone: data.phone,
+            phone,
             is_active: true
         });
 
@@ -175,21 +226,79 @@ class UserService {
         const user = await User.findByPk(id);
 
         if (!user) {
-            throw new Error('User not found');
+            const err = new Error('User not found');
+            err.status = 404;
+            throw err;
         }
 
+        const errors = {};
         const updateData = {};
-        if (data.name !== undefined) updateData.name = data.name;
-        if (data.email !== undefined) updateData.email = String(data.email).trim().toLowerCase();
-        if (data.phone !== undefined) updateData.phone = data.phone;
+
+        if (data.name !== undefined) {
+            const name = String(data.name).trim();
+            if (!name) {
+                errors.name = 'Name cannot be empty';
+            } else if (name.length < 2) {
+                errors.name = 'Name must be at least 2 characters';
+            } else {
+                updateData.name = name;
+            }
+        }
+
+        if (data.email !== undefined) {
+            const email = String(data.email).trim().toLowerCase();
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!email) {
+                errors.email = 'Email cannot be empty';
+            } else if (!emailRegex.test(email)) {
+                errors.email = 'Please provide a valid email address';
+            } else {
+                const existEmail = await User.findOne({ where: { email, id: { [Op.ne]: id } } });
+                if (existEmail) {
+                    errors.email = 'Email is already registered';
+                } else {
+                    updateData.email = email;
+                }
+            }
+        }
+
+        if (data.phone !== undefined) {
+            const phone = String(data.phone).trim();
+            if (!phone) {
+                errors.phone = 'Phone number cannot be empty';
+            } else if (!/^[0-9+()\-\s]{8,20}$/.test(phone)) {
+                errors.phone = 'Please provide a valid phone number';
+            } else {
+                const existPhone = await User.findOne({ where: { phone, id: { [Op.ne]: id } } });
+                if (existPhone) {
+                    errors.phone = 'Phone number is already registered';
+                } else {
+                    updateData.phone = phone;
+                }
+            }
+        }
+
+        if (data.password !== undefined && data.password !== '') {
+            const password = String(data.password);
+            if (password.length < 6) {
+                errors.password = 'Password must be at least 6 characters';
+            } else {
+                updateData.password = await bcrypt.hash(password, 10);
+            }
+        }
+
+        if (Object.keys(errors).length > 0) {
+            const firstMsg = Object.values(errors)[0];
+            const error = new Error(firstMsg);
+            error.status = 400;
+            error.errors = errors;
+            throw error;
+        }
+
         if (data.is_active !== undefined) updateData.is_active = data.is_active;
         if (data.telegram_chat_id !== undefined) updateData.telegram_chat_id = data.telegram_chat_id;
         if (data.two_fa_pin !== undefined) updateData.two_fa_pin = data.two_fa_pin;
         if (data.two_fa_enabled !== undefined) updateData.two_fa_enabled = data.two_fa_enabled;
-
-        if (data.password) {
-            updateData.password = await bcrypt.hash(data.password, 10);
-        }
 
         await user.update(updateData);
 
