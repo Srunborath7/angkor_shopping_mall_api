@@ -4,10 +4,39 @@ const paymentService = require('../services/paymentService');
 const { bot } = require('../config/telegram');
 const { trackInteractionBulk } = require('../utils/trackInteraction');
 const { Op } = require('sequelize');
+const sequelize = require('../config/db');
 
 const isValidUUID = (str) => {
     if (!str || typeof str !== 'string') return false;
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str);
+};
+
+const generateNextOrderNumber = async () => {
+    try {
+        const [results] = await sequelize.query(`
+            SELECT order_number FROM orders 
+            WHERE order_number ~ '^OR-[0-9]+$' 
+            ORDER BY CAST(SUBSTRING(order_number FROM 4) AS INTEGER) DESC 
+            LIMIT 1;
+        `);
+        let nextNumber = 1;
+        if (results && results.length > 0 && results[0].order_number) {
+            const currentNum = parseInt(results[0].order_number.replace('OR-', ''), 10);
+            if (!isNaN(currentNum)) nextNumber = currentNum + 1;
+        } else {
+            const count = await Order.count();
+            nextNumber = (count || 0) + 1;
+        }
+        return `OR-${String(nextNumber).padStart(5, '0')}`;
+    } catch (e) {
+        console.error('Error generating order number:', e.message);
+        try {
+            const count = await Order.count();
+            return `OR-${String((count || 0) + 1).padStart(5, '0')}`;
+        } catch {
+            return `OR-${String(Date.now()).slice(-5)}`;
+        }
+    }
 };
 
 const buildOrderSearchCondition = (idOrKey) => {
@@ -18,6 +47,8 @@ const buildOrderSearchCondition = (idOrKey) => {
     }
     return {
         [Op.or]: [
+            { order_number: cleanKey },
+            { order_number: `OR-${cleanKey.replace(/^OR-?/i, '').padStart(5, '0')}` },
             { khqr_md5: cleanKey },
             { payment_intent_id: `ABA-${cleanKey}` },
             { payment_intent_id: cleanKey },
@@ -192,8 +223,13 @@ class OrderController {
             }
 
             // 3. Create Order
+            const generatedOrderNum = req.body.order_number && String(req.body.order_number).startsWith('OR-')
+                ? req.body.order_number
+                : await generateNextOrderNumber();
+
             const order = await Order.create({
                 user_id: userId,
+                order_number: generatedOrderNum,
                 subtotal_amount: subtotalAmount,
                 trade_in_discount: tradeInDiscount,
                 trade_in_product_id: tradeInProduct ? tradeInProduct.id : null,
@@ -400,7 +436,16 @@ Your Order #${order.id.slice(0, 8)} status has changed to: *${status.toUpperCase
     async deleteOrder(req, res) {
         try {
             const { id } = req.params;
-            const order = await Order.findByPk(id);
+            let order = null;
+            if (isValidUUID(id)) {
+                order = await Order.findByPk(id);
+            }
+            if (!order) {
+                const searchCondition = buildOrderSearchCondition(id);
+                if (searchCondition) {
+                    order = await Order.findOne({ where: searchCondition });
+                }
+            }
 
             if (!order) {
                 return errorResponse(res, 'Order not found', 404);
@@ -416,7 +461,20 @@ Your Order #${order.id.slice(0, 8)} status has changed to: *${status.toUpperCase
     async payOrder(req, res) {
         try {
             const { id } = req.params;
-            const order = await Order.findByPk(id);
+            let order = null;
+            if (isValidUUID(id)) {
+                order = await Order.findByPk(id);
+            }
+            if (!order) {
+                const searchCondition = buildOrderSearchCondition(id);
+                if (searchCondition) {
+                    order = await Order.findOne({ where: searchCondition });
+                }
+            }
+
+            if (!order) {
+                return errorResponse(res, 'Order not found', 404);
+            }
 
             if (!order) {
                 return errorResponse(res, 'Order not found', 404);
@@ -473,8 +531,10 @@ Your Order #${order.id.slice(0, 8)} status has changed to: *${status.toUpperCase
                 subtotal += (parseFloat(it.price) || 0) * (parseInt(it.quantity) || 1);
             }
 
+            const adminOrderNum = await generateNextOrderNumber();
             const order = await Order.create({
                 user_id: user_id || req.user?.id,
+                order_number: adminOrderNum,
                 subtotal_amount: subtotal,
                 total_amount: subtotal,
                 status,

@@ -11,6 +11,11 @@ const Order = sequelize.define('Order', {
         type: DataTypes.UUID,
         allowNull: false,
     },
+    order_number: {
+        type: DataTypes.STRING(50),
+        allowNull: true,
+        comment: 'Sequential formatted order code, e.g. OR-00001',
+    },
     total_amount: {
         type: DataTypes.DECIMAL(10, 2),
         allowNull: false,
