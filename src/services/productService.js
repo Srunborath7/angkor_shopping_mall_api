@@ -24,7 +24,7 @@ class ProductService {
 
         return await Product.findAll({
             where,
-            attributes: ['id', 'name', 'price', 'stock_quantity', 'category_id', 'brand_id', 'is_active', 'created_at'],
+            attributes: ['id', 'name', 'price', 'stock_quantity', 'category_id', 'brand_id', 'is_active', 'created_at', 'promo_code', 'promo_discount'],
             include: [
                 { model: Category, as: 'category', attributes: ['id', 'name'] },
                 { model: Brand, as: 'brand', attributes: ['id', 'name'] },
@@ -56,7 +56,7 @@ class ProductService {
 
         const { count, rows } = await Product.findAndCountAll({
             where,
-            attributes: ['id', 'name', 'price', 'stock_quantity', 'category_id', 'brand_id', 'is_active', 'created_at'],
+            attributes: ['id', 'name', 'price', 'stock_quantity', 'category_id', 'brand_id', 'is_active', 'created_at', 'promo_code', 'promo_discount'],
             include: [
                 { model: Category, as: 'category', attributes: ['id', 'name'] },
                 { model: Brand, as: 'brand', attributes: ['id', 'name'] },
@@ -193,7 +193,9 @@ class ProductService {
                 brand_id: data.brand_id,
                 is_active: data.is_active ?? true,
                 created_by: data.created_by || null,
-                updated_by: data.updated_by || null
+                updated_by: data.updated_by || null,
+                promo_code: data.promo_code || null,
+                promo_discount: data.promo_discount !== undefined ? data.promo_discount : 0
             };
 
             const product = await Product.create(baseProductData, { transaction: t });

@@ -43,6 +43,15 @@ const Product = sequelize.define('Product', {
     updated_by: {
         type: DataTypes.UUID,
         allowNull: true,
+    },
+    promo_code: {
+        type: DataTypes.STRING,
+        allowNull: true,
+    },
+    promo_discount: {
+        type: DataTypes.DECIMAL(5, 2),
+        allowNull: true,
+        defaultValue: 0,
     }
 }, {
     tableName: 'products',

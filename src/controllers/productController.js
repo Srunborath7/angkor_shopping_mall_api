@@ -50,6 +50,8 @@ class ProductController {
                 category_id: req.body.category_id,
                 brand_id: req.body.brand_id,
                 is_active: req.body.is_active ?? true,
+                promo_code: req.body.promo_code || null,
+                promo_discount: req.body.promo_discount !== undefined ? req.body.promo_discount : 0,
                 image_url: image?.url || req.body.image_url,
                 image_path: image?.path || req.body.image_path,
                 created_by: req.user?.id,
@@ -164,6 +166,8 @@ class ProductController {
                 category_id: req.body.category_id ?? product.category_id,
                 brand_id: req.body.brand_id ?? product.brand_id,
                 is_active: req.body.is_active ?? product.is_active,
+                promo_code: req.body.promo_code !== undefined ? req.body.promo_code : product.promo_code,
+                promo_discount: req.body.promo_discount !== undefined ? req.body.promo_discount : product.promo_discount,
                 updated_by: req.user?.id
             };
 
