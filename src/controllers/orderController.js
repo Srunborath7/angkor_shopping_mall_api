@@ -12,7 +12,7 @@ const isValidUUID = (str) => {
 
 const buildOrderSearchCondition = (idOrKey) => {
     if (!idOrKey) return null;
-    const cleanKey = String(idOrKey).trim();
+    const cleanKey = String(idOrKey || "").replace(/^#/, "").trim();
     if (isValidUUID(cleanKey)) {
         return { id: cleanKey };
     }
@@ -109,13 +109,35 @@ class OrderController {
                 ]
             });
 
-            if (cartItems.length === 0) {
+            let checkoutItems = [...cartItems];
+            if (checkoutItems.length === 0 && Array.isArray(req.body.items) && req.body.items.length > 0) {
+                checkoutItems = await Promise.all(req.body.items.map(async (raw) => {
+                    const prodId = raw.product_id || raw.id;
+                    const prod = await Product.findByPk(prodId, {
+                        include: [{ model: FlashSale, as: 'flashSales', required: false, where: { status: 'active' } }]
+                    });
+                    let variant = null;
+                    if (raw.variant_id) {
+                        variant = await ProductVariant.findByPk(raw.variant_id);
+                    }
+                    return {
+                        product_id: prodId,
+                        variant_id: raw.variant_id || null,
+                        quantity: parseInt(raw.quantity || 1, 10),
+                        product: prod,
+                        variant: variant,
+                        attributes: raw.attributes || {}
+                    };
+                }));
+            }
+
+            if (checkoutItems.length === 0) {
                 return errorResponse(res, 'Cannot checkout: Your cart is empty', 400);
             }
 
             // 2. Validate stock and calculate total amount
             let subtotalAmount = 0;
-            for (const item of cartItems) {
+            for (const item of checkoutItems) {
                 if (!item.product) {
                     return errorResponse(res, 'Product in cart no longer exists', 404);
                 }
@@ -182,7 +204,7 @@ class OrderController {
             });
 
             // 4. Create Order Items
-            for (const item of cartItems) {
+            for (const item of checkoutItems) {
                 let effectivePrice = item.variant?.price
                     ? parseFloat(item.variant.price)
                     : parseFloat(item.product.price);
@@ -313,19 +335,38 @@ class OrderController {
 
     async updateOrderStatus(req, res) {
         try {
-            const { id } = req.params;
+            const cleanId = String(req.params.id || "").replace(/^#/, "").trim();
             const { status, shipping_address, contact_phone } = req.body;
 
-            const order = await Order.findByPk(id, {
-                include: [
-                    {
-                        model: User,
-                        as: 'user',
-                        attributes: ['id', 'name', 'email', 'phone', 'telegram_chat_id']
-                    },
-                    tradeInIncludes()
-                ]
-            });
+            let order = null;
+            if (isValidUUID(cleanId)) {
+                order = await Order.findByPk(cleanId, {
+                    include: [
+                        {
+                            model: User,
+                            as: 'user',
+                            attributes: ['id', 'name', 'email', 'phone', 'telegram_chat_id']
+                        },
+                        tradeInIncludes()
+                    ]
+                });
+            }
+            if (!order) {
+                const searchCondition = buildOrderSearchCondition(cleanId);
+                if (searchCondition) {
+                    order = await Order.findOne({
+                        where: searchCondition,
+                        include: [
+                            {
+                                model: User,
+                                as: 'user',
+                                attributes: ['id', 'name', 'email', 'phone', 'telegram_chat_id']
+                            },
+                            tradeInIncludes()
+                        ]
+                    });
+                }
+            }
 
             if (!order) {
                 return errorResponse(res, 'Order not found', 404);

@@ -33,7 +33,7 @@ const Order = sequelize.define('Order', {
         comment: 'Reference to TradeProduct applied for trade-in discount',
     },
     status: {
-        type: DataTypes.ENUM('pending', 'paid', 'failed', 'shipped', 'completed', 'cancelled'),
+        type: DataTypes.ENUM('pending', 'paid', 'failed', 'shipped', 'completed', 'cancelled', 'processing', 'ready'),
         defaultValue: 'pending',
         allowNull: false,
     },
