@@ -131,12 +131,17 @@ class PaymentController {
             }
 
             // Build safe PostgreSQL search conditions
+            const cleanKey = queryKey.replace(/^ABA-/i, '').trim();
             const orConditions = [
                 { khqr_md5: queryKey },
+                { khqr_md5: cleanKey },
+                { payment_intent_id: `ABA-${cleanKey}` },
                 { payment_intent_id: `ABA-${queryKey}` },
                 { payment_intent_id: queryKey },
+                { payment_intent_id: cleanKey },
                 { transaction_hash: queryKey },
-                { transaction_hash: `ABA-${queryKey}` }
+                { transaction_hash: cleanKey },
+                { transaction_hash: `ABA-${cleanKey}` }
             ];
 
             if (isValidUUID(queryKey)) {
@@ -288,7 +293,7 @@ class PaymentController {
                         status: 'paid',
                         paid_at: new Date(),
                         transaction_hash: mockTxnHash,
-                        payment_intent_id: mockTxnHash,
+                        payment_intent_id: order.payment_intent_id || (targetKey ? (targetKey.startsWith('ABA-') ? targetKey : `ABA-${targetKey}`) : mockTxnHash),
                         payment_method: 'ABA_PAYWAY'
                     });
 
@@ -349,6 +354,20 @@ class PaymentController {
     /**
      * Handle ABA PayWay callback / pushback notification
      */
+    /**
+     * Get live list of transactions from ABA PayWay Sandbox/Live gateway
+     */
+    async getAbaTransactions(req, res) {
+        try {
+            const { from_date, to_date, status } = req.query;
+            const result = await abaPaywayService.getTransactionList({ from_date, to_date, status });
+            return successResponse(res, 'ABA PayWay transactions fetched successfully', result);
+        } catch (error) {
+            console.error('Error fetching ABA transactions:', error);
+            return errorResponse(res, error.message || 'Failed to fetch transactions', 500);
+        }
+    }
+
     async handleAbaCallback(req, res) {
         try {
             const callbackData = req.body;
